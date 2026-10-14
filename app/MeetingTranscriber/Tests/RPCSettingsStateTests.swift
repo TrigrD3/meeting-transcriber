@@ -139,6 +139,7 @@
             XCTAssertEqual(s.output.directory, AppPaths.downloadsProtocolsDir.path)
             XCTAssertTrue(s.output.includeFullTranscriptInProtocol)
             XCTAssertTrue(s.output.saveRawTranscriptSeparately)
+            XCTAssertFalse(s.output.useAITitleForFilenames, "off by default: names keep their timestamp")
         }
 
         func test_snapshot_output_resolvesCustomBookmark() throws {
@@ -251,6 +252,7 @@
                 "protocolGeneration.claudeBin",
                 "output.directory", "output.hasCustomDirectory", "output.hasCustomPrompt",
                 "output.includeFullTranscriptInProtocol", "output.saveRawTranscriptSeparately",
+                "output.useAITitleForFilenames",
                 "diagnostics.verboseDiagnostics", "diagnostics.debugRPCEnabled",
                 "updates.checkForUpdates", "updates.includePreReleases",
             ]

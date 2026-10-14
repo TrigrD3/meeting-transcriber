@@ -432,10 +432,13 @@
                 let includeFullTranscriptInProtocol: Bool
                 /// Whether the completed job keeps a separate raw transcript file.
                 let saveRawTranscriptSeparately: Bool
+                /// Whether a job's files are named after the AI meeting title instead of the timestamped slug.
+                let useAITitleForFilenames: Bool
 
                 static let empty = Self(
                     directory: nil, hasCustomDirectory: false, hasCustomPrompt: false,
                     includeFullTranscriptInProtocol: false, saveRawTranscriptSeparately: false,
+                    useAITitleForFilenames: false,
                 )
             }
 

@@ -592,6 +592,19 @@ with a saved protocol. If protocol generation is disabled, fails, or the job
 ends in an error, the raw transcript is retained with a warning; recordings are
 governed by their separate retention policy.
 
+`AppSettings.useAITitleForFilenames` (off by default, captured per job the same
+way) names a job's files after the meeting title in the generated protocol's
+heading instead of the timestamped slug: `sprint_planning.md`,
+`sprint_planning.txt`, `sprint_planning_mix.wav` and so on. It can only act once
+a protocol exists, so with the `.none` provider, a failed generation, or a
+heading that is a placeholder, bracketed or has no alphanumerics, the
+timestamped names stay. The rename moves every artifact of the job in both
+`protocols/` and `recordings/`, found from the closed suffix lists rather than a
+prefix scan, because a bare-title stem is a prefix of other jobs' stems. A title
+is taken only if none of its artifacts exist, otherwise `_<shortID>` is
+appended, and nothing is overwritten. If any move fails, the ones already done
+are undone and the job keeps its old stem and paths.
+
 `AppSettings.protocolLanguage` (default `"German"`) is substituted into the prompt as `{LANGUAGE}`. Custom prompts can also use `{MEETING_DATE}` (`YYYY-MM-DD`) and `{MEETING_TIME}` (`HH:mm`), derived from the captured recording start time. Imports and recovery jobs resolve those time placeholders to `Unknown` rather than their enqueue or processing time. Only recordings with a captured start receive the authoritative meeting-metadata block, so existing custom prompts receive reliable temporal context without needing to add the placeholders.
 
 ### Claude CLI Invocation

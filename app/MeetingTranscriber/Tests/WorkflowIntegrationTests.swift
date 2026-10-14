@@ -252,12 +252,14 @@ final class WorkflowIntegrationTests: XCTestCase {
         var currentOptions = TranscriptOutputOptions(
             includeFullTranscriptInProtocol: true,
             saveRawTranscriptSeparately: true,
+            useAITitleForFilenames: false,
         )
         let (h, _) = try makeHarness { currentOptions }
         h.queue.enqueue(makeJob(audioPath: h.audioPath))
         currentOptions = TranscriptOutputOptions(
             includeFullTranscriptInProtocol: false,
             saveRawTranscriptSeparately: false,
+            useAITitleForFilenames: false,
         )
         await h.queue.processNext()
 

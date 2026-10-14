@@ -931,7 +931,7 @@ extension PipelineQueue {
         // only after a transcript exists, so namingSlug is set on every real
         // path; the fallback just keeps generation working if the job is gone.
         let job = jobs.first { $0.id == jobID }
-        let basename = job?.namingSlug
+        let initialBasename = job?.namingSlug
             ?? Self.namingSlug(title: title, jobID: jobID, startTime: Date())
         let meetingStartTime = job?.meetingStartTime
         updateJobState(id: jobID, to: .generatingProtocol)
@@ -962,7 +962,21 @@ extension PipelineQueue {
             addWarning(id: jobID, "Protocol generation failed — transcript saved")
             return
         }
-        let markdown = transcriptOutputOptions(forJobID: jobID).includeFullTranscriptInProtocol
+
+        let outputOptions = transcriptOutputOptions(forJobID: jobID)
+        var basename = initialBasename
+        // A job cancelled or removed during the LLM call is gone, and
+        // `transcriptOutputOptions` then answers from the queue-wide setting
+        // rather than the job's own: its files are not ours to rename.
+        if outputOptions.useAITitleForFilenames,
+           jobs.contains(where: { $0.id == jobID }),
+           let titleSlug = ProtocolGenerator.extractTitle(from: protocolMD).flatMap(ProtocolGenerator.toSnakeCase) {
+            basename = renameJobArtifacts(
+                jobID: jobID, from: initialBasename, titleSlug: titleSlug, protocolsDir: protocolsDir,
+            )
+        }
+
+        let markdown = outputOptions.includeFullTranscriptInProtocol
             ? protocolMD + "\n\n---\n\n## Full Transcript\n\n" + transcript
             : protocolMD
         do {
@@ -977,6 +991,92 @@ extension PipelineQueue {
             logger.warning("[\(shortID, privacy: .public)] protocol_save_failed error=\(error.localizedDescription, privacy: .private)")
             addWarning(id: jobID, "Protocol was generated but could not be saved; the transcript was saved")
         }
+    }
+
+    /// Gives a job's artifacts the stem built from the AI meeting title
+    /// (`titleSlug`), and returns the stem the job carries afterwards: the new
+    /// one, or `oldStem` when nothing was renamed.
+    ///
+    /// All-or-nothing. The plan names every file explicitly (see
+    /// `ArtifactRenamePlan`) and never overwrites: a stem is only taken when none
+    /// of its artifacts exist, so another meeting's audio can't be replaced, and
+    /// a move onto an existing file fails instead of deleting it. If any move
+    /// fails the ones already done are undone and the job keeps its old stem and
+    /// paths, so the paths on the job never point at files that aren't there.
+    /// Only a failed undo (a file that moved and cannot move back) leaves files
+    /// under the new name, and the warning on the job says so.
+    ///
+    /// Job paths are repointed only for files that actually moved, and
+    /// `meetingTitle` is left alone: it is the caller's title, read back through
+    /// `/state` and `/v1/jobs`, and it is the input to later protocol runs.
+    @discardableResult
+    func renameJobArtifacts(
+        jobID: UUID,
+        from oldStem: String,
+        titleSlug: String,
+        protocolsDir: URL,
+    ) -> String {
+        let fm = FileManager.default
+        let shortID = PipelineJob.shortID(for: jobID)
+        let dirs = ArtifactRenamePlan.Directories(
+            protocols: protocolsDir,
+            recordings: protocolsDir.deletingLastPathComponent().appendingPathComponent("recordings"),
+        )
+        let exists: (URL) -> Bool = { fm.fileExists(atPath: $0.path) }
+
+        guard let newStem = ArtifactRenamePlan.availableStem(
+            titleSlug: titleSlug, shortID: shortID, currentStem: oldStem, in: dirs, exists: exists,
+        ) else {
+            logger.warning("[\(shortID, privacy: .public)] ai_title_rename_skipped reason=no_free_name")
+            return oldStem
+        }
+        guard newStem != oldStem else { return oldStem }
+
+        let moves = ArtifactRenamePlan.moves(from: oldStem, to: newStem, in: dirs, exists: exists)
+        var done: [ArtifactRenamePlan.Move] = []
+        do {
+            for move in moves {
+                try fm.moveItem(at: move.from, to: move.to)
+                done.append(move)
+            }
+        } catch {
+            var undoFailed = false
+            for move in done.reversed() {
+                do {
+                    try fm.moveItem(at: move.to, to: move.from)
+                } catch {
+                    undoFailed = true
+                    logger
+                        .error(
+                            "[\(shortID, privacy: .public)] ai_title_rename_undo_failed file=\(move.from.lastPathComponent, privacy: .private) error=\(error.localizedDescription, privacy: .private)",
+                        )
+                }
+            }
+            logger.warning("[\(shortID, privacy: .public)] ai_title_rename_failed error=\(error.localizedDescription, privacy: .private)")
+            addWarning(
+                id: jobID,
+                undoFailed
+                    ? "Could not rename the output files to the AI meeting title, and some could not be moved back; check the output folder"
+                    : "Could not rename the output files to the AI meeting title; the original names were kept",
+            )
+            return oldStem
+        }
+        logger.info("[\(shortID, privacy: .public)] ai_title_rename moved=\(done.count, privacy: .public)")
+
+        if let idx = jobs.firstIndex(where: { $0.id == jobID }) {
+            func moved(_ url: URL?) -> URL? {
+                guard let url else { return nil }
+                return done.first { $0.from.standardizedFileURL == url.standardizedFileURL }?.to ?? url
+            }
+            jobs[idx].namingSlug = newStem
+            jobs[idx].transcriptPath = moved(jobs[idx].transcriptPath)
+            jobs[idx].protocolPath = moved(jobs[idx].protocolPath)
+            jobs[idx].recordRelocatedAudio(RelocatedAudioPaths(
+                mix: moved(jobs[idx].mixPath), app: moved(jobs[idx].appPath), mic: moved(jobs[idx].micPath),
+            ))
+            saveSnapshot()
+        }
+        return newStem
     }
 
     // MARK: - VAD Preprocessing

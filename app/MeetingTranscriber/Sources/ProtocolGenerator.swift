@@ -259,6 +259,136 @@ enum ProtocolGenerator {
     static func filename(title: String, ext: String) -> String {
         "\(basename(title: title, startTime: Date(), shortID: "")).\(ext)"
     }
+
+    /// Extract a meeting title from protocol markdown.
+    ///
+    /// Looks for the first top-level `#` heading. The built-in prompt asks for
+    /// `# <Protocol word> - <Title>` in the protocol language, so a short label
+    /// before the first dash is dropped, as is a known protocol word before a
+    /// colon. Anything else is a direct title and is kept whole, including a
+    /// colon or later dashes inside it.
+    ///
+    /// Returns `nil` if there is no usable title: no heading, a placeholder
+    /// (`Untitled`, the protocol word alone), or a title still wrapped in square
+    /// brackets. The model translates the template's `[Meeting Title]` into the
+    /// protocol language, so no word list can cover it; a bracketed title is
+    /// treated as the unfilled template and the caller keeps the timestamped name.
+    static func extractTitle(from markdown: String) -> String? {
+        for line in markdown.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("# ") else { continue }
+            let raw = trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)
+            guard !raw.isEmpty else { continue }
+            // `# Meeting Protocol -` is the label with an empty title slot, not
+            // a title that happens to end in a dash.
+            let header = raw.trimmingCharacters(in: CharacterSet(charactersIn: "-–—: "))
+            guard !header.isEmpty else { return nil }
+            // Whatever follows the first separator is the title slot of the
+            // template, even when the lead-in is too long to count as a label.
+            if let tail = splitHeading(header)?.rest, isBracketed(tail) { return nil }
+            return validTitle(titlePart(of: header))
+        }
+        return nil
+    }
+
+    private static func stripEmphasis(_ text: String) -> String {
+        let emphasis = CharacterSet(charactersIn: "\"'*_`“”‘’")
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: emphasis)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isBracketed(_ text: String) -> Bool {
+        let stripped = stripEmphasis(text)
+        return stripped.hasPrefix("[") && stripped.hasSuffix("]")
+    }
+
+    private static let dashSeparators = [" - ", " – ", " — "]
+
+    /// A heading label before the dash ("Meeting Protocol", "Besprechungsprotokoll")
+    /// is at most this many words; a longer lead-in is part of the title.
+    private static let maxPrefixWords = 3
+
+    /// The heading cut at its first separator, `nil` if it has none or nothing
+    /// follows it. `isDash` tells a dash from a colon.
+    private static func splitHeading(_ header: String) -> (prefix: String, rest: String, isDash: Bool)? {
+        let found = (dashSeparators + [": "]).compactMap { separator in
+            header.range(of: separator).map { (range: $0, isDash: separator != ": ") }
+        }
+        guard let first = found.min(by: { $0.range.lowerBound < $1.range.lowerBound }) else { return nil }
+        let rest = header[first.range.upperBound...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return nil }
+        return (header[..<first.range.lowerBound].trimmingCharacters(in: .whitespaces), rest, first.isDash)
+    }
+
+    private static func titlePart(of header: String) -> String {
+        guard let (prefix, rest, isDash) = splitHeading(header) else { return header }
+        let isProtocolWord = protocolHeadingWords.contains(prefix.lowercased())
+        let isShortLabel = isDash
+            && !prefix.contains(":")
+            && prefix.split(whereSeparator: \.isWhitespace).count <= maxPrefixWords
+        return isProtocolWord || isShortLabel ? rest : header
+    }
+
+    private static func validTitle(_ raw: String) -> String? {
+        let title = stripEmphasis(raw)
+        if isBracketed(title) { return nil }
+        let lower = title.lowercased()
+        guard !title.isEmpty,
+              !placeholderTitles.contains(lower),
+              !protocolHeadingWords.contains(lower)
+        else { return nil }
+        return title
+    }
+
+    /// The word a protocol heading opens with, in the languages the Settings
+    /// picker offers most. Alone it is a heading without a title.
+    private static let protocolHeadingWords: Set<String> = [
+        "meeting protocol", "protocol", "meeting minutes", "minutes",
+        "besprechungsprotokoll", "sitzungsprotokoll", "meeting-protokoll", "protokoll",
+        "protokol rapat",
+    ]
+
+    private static let placeholderTitles: Set<String> = [
+        "meeting title", "title", "titel", "titel des meetings", "titel der besprechung",
+        "untitled", "unbenannt", "unknown", "none", "n/a", "tbd",
+    ]
+
+    /// Longest slug `toSnakeCase` returns, in UTF-8 bytes. A file name component
+    /// holds at most 255 bytes on APFS; the longest artifact suffix
+    /// (`_app_16k.wav`, `_naming.json`) and a `_<shortID>` collision guard still
+    /// have to fit after the slug.
+    static let maxSlugBytes = 100
+
+    /// Convert arbitrary text (e.g. an AI meeting title) to a path-safe
+    /// snake_case slug: lowercase alphanumerics, every other run of characters
+    /// collapsed to one underscore, no leading or trailing underscore, cut to
+    /// `maxSlugBytes` on a character boundary. Returns `nil` if nothing
+    /// alphanumeric remains, so the caller can keep the timestamped name rather
+    /// than file every such meeting under one generic word.
+    static func toSnakeCase(_ text: String) -> String? {
+        var result = ""
+        var pendingSeparator = false
+        for scalar in text.precomposedStringWithCanonicalMapping.unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                if pendingSeparator && !result.isEmpty { result.append("_") }
+                pendingSeparator = false
+                result.append(String(scalar).lowercased())
+            } else {
+                pendingSeparator = true
+            }
+        }
+
+        var capped = ""
+        for character in result {
+            guard capped.utf8.count + character.utf8.count <= maxSlugBytes else { break }
+            capped.append(character)
+        }
+        while capped.hasSuffix("_") {
+            capped.removeLast()
+        }
+        return capped.isEmpty ? nil : capped
+    }
 }
 
 enum ProtocolError: LocalizedError {

@@ -291,10 +291,12 @@ final class PipelineController {
             micLabel: settings.micName,
             includeFullTranscriptInProtocol: settings.includeFullTranscriptInProtocol,
             saveRawTranscriptSeparately: settings.saveRawTranscriptSeparately,
+            useAITitleForFilenames: settings.useAITitleForFilenames,
             transcriptOutputOptionsProvider: { [settings] in
                 TranscriptOutputOptions(
                     includeFullTranscriptInProtocol: settings.includeFullTranscriptInProtocol,
                     saveRawTranscriptSeparately: settings.saveRawTranscriptSeparately,
+                    useAITitleForFilenames: settings.useAITitleForFilenames,
                 )
             },
             speakerMatcherFactory: { SpeakerMatcher() },

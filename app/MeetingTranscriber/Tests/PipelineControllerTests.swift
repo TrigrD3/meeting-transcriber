@@ -166,6 +166,30 @@ final class PipelineControllerTests: XCTestCase {
         )
     }
 
+    /// The setting reaches a job through the queue the controller builds, read at
+    /// enqueue time. Shipping it on, or a controller that ignores the setting,
+    /// would rename every user's files, and the queue-level tests that set the
+    /// flag on the job directly would not notice.
+    func testAJobTakesTheAITitleSettingFromTheQueueTheControllerBuilds() throws {
+        let pc = makeController()
+        pc.activate { MockEngine() }
+        let queue = try XCTUnwrap(pc.makeQueue())
+
+        func enqueuedJob() -> PipelineJob? {
+            queue.enqueue(PipelineJob(
+                meetingTitle: "Weekly Sync", appName: "Teams",
+                mixPath: nil, appPath: nil, micPath: nil, micDelay: 0,
+            ))
+            return queue.jobs.last
+        }
+
+        XCTAssertEqual(enqueuedJob()?.useAITitleForFilenames, false, "the setting is off by default")
+        settings.useAITitleForFilenames = true
+        XCTAssertEqual(enqueuedJob()?.useAITitleForFilenames, true)
+        settings.useAITitleForFilenames = false
+        XCTAssertEqual(enqueuedJob()?.useAITitleForFilenames, false)
+    }
+
     // MARK: - rebuild() double-processing guard
 
     func testRebuildSkippedWhileQueueIsProcessing() {
