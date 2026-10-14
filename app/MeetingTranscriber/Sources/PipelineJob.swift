@@ -57,7 +57,7 @@ struct PipelineJob: Identifiable, Codable {
         String(id.uuidString.prefix(8).lowercased())
     }
 
-    let meetingTitle: String
+    var meetingTitle: String
     let appName: String
     /// nil when the job is a paired-import without a `_mix.wav` source — the
     /// pipeline mixes `appPath`+`micPath` directly to the workdir `mix_16k.wav`
