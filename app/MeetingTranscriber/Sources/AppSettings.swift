@@ -115,8 +115,23 @@ enum ProtocolProvider: String, CaseIterable {
     }
 }
 
+enum OpenAIAPIKeyPlacement: String, CaseIterable {
+    case bearerToken
+    case customHeader
+
+    /// The header name a fresh install starts with.
+    static let defaultHeaderName = "api-key"
+
+    var label: String {
+        switch self {
+        case .bearerToken: "Bearer token"
+        case .customHeader: "Custom header"
+        }
+    }
+}
+
 @Observable
-final class AppSettings {
+final class AppSettings { // swiftlint:disable:this type_body_length
     /// Backing store. Production callers pass nothing → `.standard`. Tests
     /// inject their own `UserDefaults(suiteName:)` so parallel test
     /// processes don't race on the shared on-disk plist.
@@ -551,6 +566,14 @@ final class AppSettings {
         didSet { defaults.set(openAIModel, forKey: "openAIModel") }
     }
 
+    var openAIAPIKeyPlacement: OpenAIAPIKeyPlacement {
+        didSet { defaults.set(openAIAPIKeyPlacement.rawValue, forKey: "openAIAPIKeyPlacement") }
+    }
+
+    var openAIAPIKeyHeaderName: String {
+        didSet { defaults.set(openAIAPIKeyHeaderName, forKey: "openAIAPIKeyHeaderName") }
+    }
+
     var openAIAPIKey: String {
         get { KeychainHelper.read(key: apiKeyAccount) ?? "" }
         set {
@@ -710,6 +733,9 @@ final class AppSettings {
         openAIEndpoint = defaults.object(forKey: "openAIEndpoint") as? String
             ?? Self.defaultOpenAIEndpoint
         openAIModel = defaults.object(forKey: "openAIModel") as? String ?? "llama3.1"
+        openAIAPIKeyPlacement = defaults.string(forKey: "openAIAPIKeyPlacement")
+            .flatMap(OpenAIAPIKeyPlacement.init(rawValue:)) ?? .bearerToken
+        openAIAPIKeyHeaderName = defaults.string(forKey: "openAIAPIKeyHeaderName") ?? OpenAIAPIKeyPlacement.defaultHeaderName
         customOutputDirBookmark = defaults.data(forKey: "customOutputDirBookmark")
 
         // Migrate legacy "audioDebugLogging" key (renamed to "verboseDiagnostics" 2026-05-04).

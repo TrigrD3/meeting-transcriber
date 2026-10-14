@@ -734,6 +734,17 @@ final class AppStateTests: XCTestCase { // swiftlint:disable:this type_body_leng
         XCTAssertTrue(state.pipeline.makeProtocolGenerator() is OpenAIProtocolGenerator)
     }
 
+    func testMakeProtocolGeneratorOpenAIPassesAPIKeyPlacementFromSettings() throws {
+        settings.protocolProvider = .openAICompatible
+        settings.openAIAPIKeyPlacement = .customHeader
+        settings.openAIAPIKeyHeaderName = "x-api-key"
+        let state = makeAppState()
+
+        let generator = try XCTUnwrap(state.pipeline.makeProtocolGenerator() as? OpenAIProtocolGenerator)
+        XCTAssertEqual(generator.apiKeyPlacement, .customHeader)
+        XCTAssertEqual(generator.apiKeyHeaderName, "x-api-key")
+    }
+
     #if !APPSTORE
         func testMakeProtocolGeneratorClaudeCLI() {
             settings.protocolProvider = .claudeCLI

@@ -98,6 +98,72 @@ final class SettingsInteractionTests: XCTestCase {
         XCTAssertNoThrow(try picker.find(text: "Thai"))
     }
 
+    func testOpenAIAPIKeyPlacementPickerWritesBackToSettings() throws {
+        let settings = makeSettings()
+        settings.protocolProvider = .openAICompatible
+        let view = OutputSettingsView(settings: settings)
+
+        let picker = try view.inspect()
+            .find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyPlacementPicker)
+            .find(ViewType.Picker.self)
+        try picker.select(value: OpenAIAPIKeyPlacement.customHeader)
+
+        XCTAssertEqual(settings.openAIAPIKeyPlacement, .customHeader)
+    }
+
+    func testOpenAIAPIKeyHeaderNameFieldWritesBackToSettings() throws {
+        let settings = makeSettings()
+        settings.protocolProvider = .openAICompatible
+        settings.openAIAPIKeyPlacement = .customHeader
+        let view = OutputSettingsView(settings: settings)
+
+        let field = try view.inspect()
+            .find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyHeaderNameField)
+            .find(ViewType.TextField.self)
+        XCTAssertNotEqual(settings.openAIAPIKeyHeaderName, "x-api-key", "precondition: the input must differ from the stored value")
+        try field.setInput("x-api-key")
+
+        XCTAssertEqual(settings.openAIAPIKeyHeaderName, "x-api-key")
+    }
+
+    func testOpenAIAPIKeyHeaderNameControlsOnlyAppearForCustomHeader() throws {
+        let settings = makeSettings()
+        settings.protocolProvider = .openAICompatible
+        settings.openAIAPIKeyPlacement = .bearerToken
+        settings.openAIAPIKeyHeaderName = "Content-Type"
+        let body = try OutputSettingsView(settings: settings).inspect()
+
+        // The placement picker renders, so the absences below are not a failed lookup.
+        XCTAssertNoThrow(try body.find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyPlacementPicker))
+        XCTAssertThrowsError(try body.find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyHeaderNameField))
+        XCTAssertThrowsError(try body.find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyHeaderNameWarning))
+    }
+
+    func testOpenAIAPIKeyHeaderNameWarningShownOnlyForInvalidName() throws {
+        let settings = makeSettings()
+        settings.protocolProvider = .openAICompatible
+        settings.openAIAPIKeyPlacement = .customHeader
+
+        settings.openAIAPIKeyHeaderName = "Content-Type"
+        XCTAssertNoThrow(
+            try OutputSettingsView(settings: settings).inspect()
+                .find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyHeaderNameWarning),
+        )
+
+        settings.openAIAPIKeyHeaderName = "x-api-key"
+        XCTAssertThrowsError(
+            try OutputSettingsView(settings: settings).inspect()
+                .find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyHeaderNameWarning),
+        )
+
+        // The generator trims the name before it validates it, so the warning must too.
+        settings.openAIAPIKeyHeaderName = " x-api-key "
+        XCTAssertThrowsError(
+            try OutputSettingsView(settings: settings).inspect()
+                .find(viewWithAccessibilityIdentifier: A11yID.openAIAPIKeyHeaderNameWarning),
+        )
+    }
+
     // MARK: - Transcript output toggles
 
     func testIncludeFullTranscriptToggleWritesBackToSettings() throws {

@@ -8,6 +8,8 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
     let endpoint: URL
     let model: String
     let apiKey: String?
+    let apiKeyPlacement: OpenAIAPIKeyPlacement
+    let apiKeyHeaderName: String
     let language: String
     /// Idle timeout (`URLRequest.timeoutInterval`): max time *between* received
     /// bytes. Catches a fully-stalled connection, but does NOT bound total time —
@@ -40,6 +42,8 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         model: String,
         language: String,
         apiKey: String? = nil,
+        apiKeyPlacement: OpenAIAPIKeyPlacement = .bearerToken,
+        apiKeyHeaderName: String = OpenAIAPIKeyPlacement.defaultHeaderName,
         timeoutSeconds: TimeInterval = 600,
         maxTotalSeconds: TimeInterval = 1800,
         maxOutputTokens: Int = 16000,
@@ -49,6 +53,8 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         self.model = model
         self.language = language
         self.apiKey = apiKey
+        self.apiKeyPlacement = apiKeyPlacement
+        self.apiKeyHeaderName = apiKeyHeaderName
         self.timeoutSeconds = timeoutSeconds
         self.maxTotalSeconds = maxTotalSeconds
         self.maxOutputTokens = maxOutputTokens
@@ -118,9 +124,12 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKey, !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        }
+        let redirectGuard = try Self.setAPIKeyHeader(
+            apiKey,
+            placement: apiKeyPlacement,
+            headerName: apiKeyHeaderName,
+            on: &request,
+        )
         request.httpBody = bodyData
         request.timeoutInterval = timeoutSeconds
 
@@ -136,7 +145,13 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         let finalRequest = request
         return try await withThrowingTaskGroup(of: String.self) { group in
             group.addTask {
-                try await Self.streamProtocol(session: session, request: finalRequest, requestURL: requestURL, model: model)
+                try await Self.streamProtocol(
+                    session: session,
+                    request: finalRequest,
+                    redirectGuard: redirectGuard,
+                    requestURL: requestURL,
+                    model: model,
+                )
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(deadline * 1_000_000_000))
@@ -153,11 +168,15 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
     /// Open the streaming request and accumulate the SSE content deltas. Static
     /// so the deadline race captures only Sendable locals, not `self`.
     private static func streamProtocol(
-        session: URLSession, request: URLRequest, requestURL: URL, model: String,
+        session: URLSession,
+        request: URLRequest,
+        redirectGuard: CrossOriginRedirectRefuser?,
+        requestURL: URL,
+        model: String,
     ) async throws -> String {
         let (bytes, response): (URLSession.AsyncBytes, URLResponse)
         do {
-            (bytes, response) = try await session.bytes(for: request)
+            (bytes, response) = try await session.bytes(for: request, delegate: redirectGuard)
         } catch {
             logger.error(
                 "openai_connection_failed endpoint=\(requestURL.absoluteString, privacy: .public) model=\(model, privacy: .public) error=\(error.localizedDescription, privacy: .public)",
@@ -238,6 +257,55 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         return SSEChunk(content: content, finishReason: finishReason)
     }
 
+    /// Configure the key's HTTP header. Custom header names follow the HTTP
+    /// token grammar and must not be one of `reservedAPIKeyHeaderNames`.
+    /// Returns the task delegate that must accompany a custom header, nil when
+    /// none is needed.
+    private static func setAPIKeyHeader(
+        _ apiKey: String?,
+        placement: OpenAIAPIKeyPlacement,
+        headerName: String,
+        on request: inout URLRequest,
+    ) throws -> CrossOriginRedirectRefuser? {
+        guard let apiKey, !apiKey.isEmpty else { return nil }
+
+        switch placement {
+        case .bearerToken:
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            return nil
+
+        case .customHeader:
+            let name = headerName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isValidAPIKeyHeaderName(name) else {
+                throw ProtocolError.connectionFailed("Invalid API key header name")
+            }
+            request.setValue(apiKey, forHTTPHeaderField: name)
+            return CrossOriginRedirectRefuser()
+        }
+    }
+
+    /// Lowercased header names a custom API key header must not use. URLSession
+    /// overwrites Content-Length with the real body length and silently drops
+    /// Transfer-Encoding, so a key placed there never leaves the machine;
+    /// Content-Type belongs to the JSON body, and the rest describe the
+    /// connection itself, so sending the key in them breaks the request.
+    private static let reservedAPIKeyHeaderNames: Set<String> = [
+        "content-type", "content-length", "transfer-encoding", "host", "connection", "expect", "upgrade",
+    ]
+
+    /// The HTTP token characters a field name may consist of.
+    private static let apiKeyHeaderNameCharacters = CharacterSet(
+        charactersIn: "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    )
+
+    /// Return whether `name` is a valid HTTP field name that is free to carry
+    /// the API key.
+    static func isValidAPIKeyHeaderName(_ name: String) -> Bool {
+        !name.isEmpty
+            && !reservedAPIKeyHeaderNames.contains(name.lowercased())
+            && name.unicodeScalars.allSatisfy(apiKeyHeaderNameCharacters.contains)
+    }
+
     /// Normalize a user-entered endpoint to the OpenAI API *base* URL (e.g.
     /// `http://host/v1`), from which the concrete `/chat/completions` and
     /// `/models` paths are derived.
@@ -258,7 +326,14 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
 
     /// Test connection to the API by querying available models.
     /// Returns model names on success.
-    static func testConnection(endpoint: String, model _: String, apiKey: String?, session: URLSession = .shared) async -> Result<[String], any Error> {
+    static func testConnection(
+        endpoint: String,
+        model _: String,
+        apiKey: String?,
+        apiKeyPlacement: OpenAIAPIKeyPlacement = .bearerToken,
+        apiKeyHeaderName: String = OpenAIAPIKeyPlacement.defaultHeaderName,
+        session: URLSession = .shared,
+    ) async -> Result<[String], any Error> {
         // Accept either the API base URL (.../v1) or the full chat-completions
         // URL (.../v1/chat/completions); both resolve to the same base + /models.
         guard let entered = URL(string: endpoint) else {
@@ -270,12 +345,20 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         var request = URLRequest(url: modelsURL)
         request.httpMethod = "GET"
         request.timeoutInterval = 10
-        if let apiKey, !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let redirectGuard: CrossOriginRedirectRefuser?
+        do {
+            redirectGuard = try setAPIKeyHeader(
+                apiKey,
+                placement: apiKeyPlacement,
+                headerName: apiKeyHeaderName,
+                on: &request,
+            )
+        } catch {
+            return .failure(error)
         }
 
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await session.data(for: request, delegate: redirectGuard)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200 ... 299).contains(httpResponse.statusCode)
             else {
@@ -294,5 +377,45 @@ struct OpenAIProtocolGenerator: ProtocolGenerating {
         } catch {
             return .failure(ProtocolError.connectionFailed(error.localizedDescription))
         }
+    }
+}
+
+/// Refuses a redirect that leaves the origin while a custom API key header is
+/// in use. URLSession drops `Authorization` when it follows a redirect but
+/// replays every other header, so a custom header would follow the hop to
+/// another host, port or scheme. Stripping it and following anyway would still
+/// send the request body there, because a 307 or 308 replays the POST and with
+/// it the transcript, in every mode. Such a hop is therefore not followed at
+/// all: URLSession then returns the 3xx response itself and nothing is sent
+/// there. Hops within the origin are followed unchanged. A request without a
+/// custom header keeps URLSession's default redirect handling.
+private final class CrossOriginRedirectRefuser: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        // The protocol requirement declares the handler escaping; without the
+        // attribute this method would no longer satisfy it and never be called.
+        // swiftlint:disable:next unneeded_escaping
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void,
+    ) {
+        // An unknown source or target cannot be shown to be the same origin.
+        guard let from = response.url, let to = request.url, Self.origin(from) == Self.origin(to) else {
+            logger.error(
+                "openai_redirect_refused status=\(response.statusCode) from=\(response.url?.host ?? "?", privacy: .public) to=\(request.url?.host ?? "?", privacy: .public)",
+            )
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+
+    /// Scheme and host compare case-insensitively and an omitted port is the
+    /// scheme's default, so `https://h` and `https://H:443` are one origin.
+    private static func origin(_ url: URL) -> String {
+        let scheme = url.scheme?.lowercased() ?? ""
+        let port = url.port ?? (scheme == "https" ? 443 : 80)
+        return "\(scheme)://\(url.host?.lowercased() ?? ""):\(port)"
     }
 }
