@@ -85,6 +85,14 @@ final class OutputSettingsViewTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
+    // MARK: - Protocol language list
+
+    func testProtocolLanguagesContainNoDuplicates() {
+        // The picker uses the names as ForEach ids, so a repeat would collide.
+        let languages = AppSettings.protocolLanguages
+        XCTAssertEqual(languages.count, Set(languages).count)
+    }
+
     // MARK: - Render
 
     func testViewRendersWithDefaultSettings() throws {

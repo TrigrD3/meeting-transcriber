@@ -70,6 +70,21 @@ final class SettingsInteractionTests: XCTestCase {
         XCTAssertEqual(settings.protocolProvider, .openAICompatible)
     }
 
+    func testProtocolLanguagePickerOffersIndonesianAndWritesBack() throws {
+        let settings = makeSettings()
+        let view = OutputSettingsView(settings: settings)
+
+        let picker = try view.inspect().find(ViewType.Picker.self) { picker in
+            try picker.labelView().text().string() == "Protocol Language"
+        }
+        // `select(value:)` only writes the binding and never checks the tags, so
+        // the option's presence has to be asserted separately.
+        XCTAssertNoThrow(try picker.find(text: "Indonesian"))
+        try picker.select(value: "Indonesian")
+
+        XCTAssertEqual(settings.protocolLanguage, "Indonesian")
+    }
+
     // MARK: - Transcript output toggles
 
     func testIncludeFullTranscriptToggleWritesBackToSettings() throws {
