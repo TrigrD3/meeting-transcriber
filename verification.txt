@@ -1,0 +1,35 @@
+Menu hover fix: verification excerpts
+================================================
+
+These are test and runtime-log results, not a screenshot
+of the floating menu. The native hover was checked manually.
+
+Fresh debug build and focused tests (empty build directory):
+Build complete! (251.06s)
+Test Suite 'MenuBarViewTests' passed at 2026-10-17 04:52:45.641.
+Test Suite 'MenuStageProgressUpdaterTests' passed at 2026-10-17 04:52:49.188.
+Test Suite 'PipelineQueueElapsedTests' passed at 2026-10-17 04:52:49.252.
+Test Suite 'PipelineQueueStageTimingTests' passed at 2026-10-17 04:52:49.267.
+Test Suite 'MeetingTranscriberPackageTests.xctest' passed at 2026-10-17 04:52:49.267.
+	 Executed 71 tests, with 0 failures (0 unexpected) in 4.467 (4.474) seconds
+Test Suite 'Selected tests' passed at 2026-10-17 04:52:49.267.
+	 Executed 71 tests, with 0 failures (0 unexpected) in 4.467 (4.480) seconds
+
+Fresh release build:
+Build complete! (416.69s)
+
+Native tracking excerpts (synthetic job; real production objects):
+2026-10-16 21:57:56 +0000 stage=Transcribing... elapsed=2.4s stableRows=true highlight=ObjectIdentifier(0x0000600001cb6be0):Cancel
+2026-10-16 21:57:57 +0000 stage=Transcribing... elapsed=2.9s stableRows=true highlight=ObjectIdentifier(0x0000600001cb6be0):Cancel
+2026-10-16 21:58:00 +0000 stage=Diarizing... elapsed=0.0s stableRows=true highlight=ObjectIdentifier(0x0000600001cb6be0):Cancel
+
+The trace identifies the same highlighted Cancel item and stable
+menu rows while elapsed time changes. Manual verification also
+confirmed hover and a running timer through all three stages.
+
+Scope: 71 focused tests passed. The full suite was not green:
+permission-dependent assertions, macOS Opus type assumptions,
+and a native AppKit/Swift runtime teardown abort remain reported.
+
+Tested tree: 0a07883af9ba9572ea69ed1089aff7f2402783bc
+Only the commit message has changed since the fresh-build run.
