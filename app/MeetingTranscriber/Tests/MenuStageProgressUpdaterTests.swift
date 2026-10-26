@@ -280,16 +280,19 @@ final class MenuStageProgressUpdaterTests: XCTestCase {
             item.isEnabled = false
             return item
         }
-        let meetingTitle = disabledRow("Zoom Meeting")
-        let meetingDetail = disabledRow("Transcribing... 9:99")
-        let heading = disabledRow(MenuStageProgressUpdater.queueHeaderTitle)
-        let menu = Self.menu(for: [job], in: queue, above: [meetingTitle, meetingDetail, .separator(), heading])
+        // Whatever heading the menu still shows when the tick lands.
+        for header in QueueHeader.all {
+            let meetingTitle = disabledRow("Zoom Meeting")
+            let meetingDetail = disabledRow("Transcribing... 9:99")
+            let heading = disabledRow(header.title)
+            let menu = Self.menu(for: [job], in: queue, above: [meetingTitle, meetingDetail, .separator(), heading])
 
-        MenuStageProgressUpdater().refresh(menu: menu, queue: queue)
+            MenuStageProgressUpdater().refresh(menu: menu, queue: queue)
 
-        XCTAssertEqual(meetingDetail.title, "Transcribing... 9:99", "A row above the queue was rewritten")
-        let stateRow = try XCTUnwrap(menu.items.last { $0.title.hasPrefix("Diarizing") })
-        XCTAssertTrue(stateRow.title.hasPrefix("Diarizing... "), stateRow.title)
+            XCTAssertEqual(meetingDetail.title, "Transcribing... 9:99", "A row above the queue was rewritten (\(header.title))")
+            let stateRow = try XCTUnwrap(menu.items.last { $0.title.hasPrefix("Diarizing") })
+            XCTAssertTrue(stateRow.title.hasPrefix("Diarizing... "), "\(header.title): \(stateRow.title)")
+        }
     }
 
     /// The rows SwiftUI emits for each job: a disabled title, a disabled state

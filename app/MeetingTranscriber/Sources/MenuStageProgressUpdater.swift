@@ -65,8 +65,10 @@ final class MenuStageProgressUpdater {
         queue = nil
     }
 
-    /// The heading `MenuBarView` puts above the job list.
-    static let queueHeaderTitle = "Processing"
+    /// Every heading `MenuBarView` can put above the job list. All of them, not
+    /// the one for the current states: the menu may still show the previous one
+    /// when a tick lands between two renders.
+    private static let queueHeaderTitles = Set(QueueHeader.all.map(\.title))
 
     /// SwiftUI does not forward Text accessibility identifiers to NSMenuItem, so
     /// a job's rows are found by position. The menu lists the jobs in queue
@@ -82,7 +84,7 @@ final class MenuStageProgressUpdater {
     func refresh(menu: NSMenu, queue: PipelineQueue) {
         let items: [NSMenuItem] = menu.items
         var cursor = items.lastIndex { item in
-            !item.isEnabled && !item.isSeparatorItem && item.title == Self.queueHeaderTitle
+            !item.isEnabled && !item.isSeparatorItem && Self.queueHeaderTitles.contains(item.title)
         }.map { $0 + 1 } ?? 0
         for job in queue.jobs {
             guard let titleIndex = items[cursor...].firstIndex(where: { item in

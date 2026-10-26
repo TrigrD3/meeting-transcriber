@@ -174,10 +174,14 @@ struct MenuBarView: View {
         .keyboardShortcut("p")
     }
 
+    private var queueHeader: QueueHeader {
+        QueueHeader.compute(jobStates: pipelineQueue.jobs.map(\.state), isProcessing: pipelineQueue.isProcessing)
+    }
+
     @ViewBuilder private var processingQueue: some View {
         if !pipelineQueue.jobs.isEmpty {
             Divider()
-            Label(MenuStageProgressUpdater.queueHeaderTitle, systemImage: "gearshape.2.fill")
+            Label(queueHeader.title, systemImage: queueHeader.systemImage)
 
             ForEach(Array(pipelineQueue.jobs.enumerated()), id: \.element.id) { index, job in
                 // A native separator, not a grouping view: each job is a run of

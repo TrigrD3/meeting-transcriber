@@ -903,6 +903,23 @@ final class MenuBarViewTests: XCTestCase {
         XCTAssertThrowsError(try body.find(ViewType.HStack.self))
     }
 
+    func testCompletedQueueShowsCompletedHeader() throws {
+        let dir = try makeTempDirectory(prefix: "menubar_completed_test")
+        let queue = PipelineQueue(logDir: dir)
+        var job = PipelineJob(
+            meetingTitle: "Sprint",
+            appName: "Zoom",
+            mixPath: URL(fileURLWithPath: "/tmp/mix.wav"),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        job.state = .done
+        queue.insertJobForTesting(job)
+
+        let sut = makeView(status: makeStatus(), pipelineQueue: queue)
+        let body = try sut.inspect()
+        XCTAssertNoThrow(try body.find(text: "Completed"))
+    }
+
     func testJobLabelsAndCancelArePresent() throws {
         let dir = try makeTempDirectory(prefix: "menubar_job_label_test")
         let queue = PipelineQueue(logDir: dir)
