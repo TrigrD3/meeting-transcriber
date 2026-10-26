@@ -19,10 +19,12 @@ enum OutputSettingsLogic {
         return "~/" + path.dropFirst(prefixed.count)
     }
 
-    /// Merge the currently-selected model into a fetched picker list so the
-    /// user's choice survives even when `/models` doesn't echo it back
-    /// (custom Ollama tags, in-flight rename, offline cache). Returns
-    /// `available` unchanged when `selected` is empty or already present.
+    /// Merge the currently-selected value into a picker list so the user's
+    /// choice survives even when the list doesn't contain it: a model that
+    /// `/models` doesn't echo back (custom Ollama tags, in-flight rename,
+    /// offline cache), or a protocol language stored by an older build or set
+    /// outside the app. Returns `available` unchanged when `selected` is empty
+    /// or already present.
     static func mergePickerOptions(available: [String], selected: String) -> [String] {
         guard !selected.isEmpty, !available.contains(selected) else { return available }
         return [selected] + available
@@ -92,7 +94,7 @@ struct OutputSettingsView: View {
                 providerConfigView
 
                 Picker("Protocol Language", selection: $settings.protocolLanguage) {
-                    ForEach(AppSettings.protocolLanguages, id: \.self) { lang in
+                    ForEach(languagePickerOptions, id: \.self) { lang in
                         Text(lang).tag(lang)
                     }
                 }
@@ -298,6 +300,10 @@ struct OutputSettingsView: View {
                 connectionTestResult = .failure(error.localizedDescription)
             }
         }
+    }
+
+    private var languagePickerOptions: [String] {
+        OutputSettingsLogic.mergePickerOptions(available: AppSettings.protocolLanguages, selected: settings.protocolLanguage)
     }
 
     private var modelPickerOptions: [String] {

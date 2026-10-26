@@ -85,6 +85,19 @@ final class SettingsInteractionTests: XCTestCase {
         XCTAssertEqual(settings.protocolLanguage, "Indonesian")
     }
 
+    func testProtocolLanguagePickerKeepsAStoredLanguageMissingFromTheList() throws {
+        let settings = makeSettings()
+        settings.protocolLanguage = "Thai"
+        XCTAssertFalse(AppSettings.protocolLanguages.contains("Thai"), "precondition: the stored value must be off-list")
+        let view = OutputSettingsView(settings: settings)
+
+        let picker = try view.inspect().find(ViewType.Picker.self) { picker in
+            try picker.labelView().text().string() == "Protocol Language"
+        }
+
+        XCTAssertNoThrow(try picker.find(text: "Thai"))
+    }
+
     // MARK: - Transcript output toggles
 
     func testIncludeFullTranscriptToggleWritesBackToSettings() throws {
