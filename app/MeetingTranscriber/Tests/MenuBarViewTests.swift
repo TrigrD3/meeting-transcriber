@@ -885,6 +885,116 @@ final class MenuBarViewTests: XCTestCase {
         XCTAssertNoThrow(try body.find(button: "Cancel"))
     }
 
+    func testJobRowDoesNotContainSpacerOrHStack() throws {
+        // This checks the SwiftUI structure; ViewInspector cannot verify native
+        // NSMenu hit-testing or which row macOS highlights on hover.
+        let queue = PipelineQueue()
+        let job = PipelineJob(
+            meetingTitle: "Sprint",
+            appName: "Zoom",
+            mixPath: URL(fileURLWithPath: "/tmp/mix.wav"),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        queue.enqueue(job)
+
+        let sut = makeView(status: makeStatus(), pipelineQueue: queue)
+        let body = try sut.inspect()
+        XCTAssertThrowsError(try body.find(ViewType.Spacer.self))
+        XCTAssertThrowsError(try body.find(ViewType.HStack.self))
+    }
+
+    func testJobLabelsAndCancelArePresent() throws {
+        let dir = try makeTempDirectory(prefix: "menubar_job_label_test")
+        let queue = PipelineQueue(logDir: dir)
+        let job = PipelineJob(
+            meetingTitle: "Sprint",
+            appName: "Zoom",
+            mixPath: URL(fileURLWithPath: "/tmp/mix.wav"),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        queue.enqueue(job)
+
+        let body = try makeView(status: makeStatus(), pipelineQueue: queue).inspect()
+        XCTAssertNoThrow(try body.find(text: "Sprint"))
+        XCTAssertNoThrow(try body.find(text: "Waiting..."))
+        XCTAssertFalse(try body.find(button: "Cancel").isDisabled())
+    }
+
+    /// Every job is a run of flat menu items, so the only thing that tells one
+    /// job's Cancel / Retry / Dismiss from the next is the separator between them.
+    func testJobsAreSeparatedByADivider() throws {
+        let dir = try makeTempDirectory(prefix: "menubar_job_divider_test")
+        let queue = PipelineQueue(logDir: dir)
+        func dividerCount() throws -> Int {
+            try makeView(status: makeStatus(), pipelineQueue: queue).inspect()
+                .findAll(ViewType.Divider.self).count
+        }
+        let first = try PipelineJob(
+            meetingTitle: "First", appName: "Teams",
+            mixPath: emptyFile("first_mix.wav", in: dir),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        queue.enqueue(first)
+        let withOneJob = try dividerCount()
+
+        let second = try PipelineJob(
+            meetingTitle: "Second", appName: "Zoom",
+            mixPath: emptyFile("second_mix.wav", in: dir),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        queue.enqueue(second)
+
+        XCTAssertEqual(try dividerCount(), withOneJob + 1)
+    }
+
+    func testCancelButtonCancelsOnlyItsOwnJob() throws {
+        let dir = try makeTempDirectory(prefix: "menubar_cancel_test")
+        let queue = PipelineQueue(logDir: dir)
+        let first = try PipelineJob(
+            meetingTitle: "First", appName: "Teams",
+            mixPath: emptyFile("first_mix.wav", in: dir),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        let second = try PipelineJob(
+            meetingTitle: "Second", appName: "Zoom",
+            mixPath: emptyFile("second_mix.wav", in: dir),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        queue.enqueue(first)
+        queue.enqueue(second)
+
+        let body = try makeView(status: makeStatus(), pipelineQueue: queue).inspect()
+        let cancelButtons = body.findAll(ViewType.Button.self).filter { button in
+            (try? button.labelView().text().string()) == "Cancel"
+        }
+        XCTAssertEqual(cancelButtons.count, 2)
+        try cancelButtons[1].tap()
+
+        XCTAssertTrue(queue.jobs.contains { $0.id == first.id })
+        XCTAssertFalse(queue.jobs.contains { $0.id == second.id })
+    }
+
+    func testActiveJobProgressLabelRendersTiming() throws {
+        let dir = try makeTempDirectory(prefix: "menu_active_progress_test")
+        let queue = PipelineQueue(logDir: dir)
+        let job = PipelineJob(
+            meetingTitle: "Sprint",
+            appName: "Zoom",
+            mixPath: URL(fileURLWithPath: "/tmp/mix.wav"),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        queue.enqueue(job)
+        queue.updateJobState(id: job.id, to: .transcribing)
+
+        let sut = makeView(status: makeStatus(), pipelineQueue: queue)
+        let body = try sut.inspect()
+        XCTAssertNoThrow(try body.find(button: "Cancel"))
+        XCTAssertNoThrow(try body.find(text: "Sprint"))
+        // Prefix, not the exact seconds: a loaded runner can take a second
+        // between `updateJobState` and `inspect()`.
+        XCTAssertNoThrow(try body.find(ViewType.Text.self) { try $0.string().hasPrefix("Transcribing... ") })
+    }
+
     func testCancelButtonHiddenForDoneJob() throws {
         let queue = PipelineQueue()
         let job = PipelineJob(

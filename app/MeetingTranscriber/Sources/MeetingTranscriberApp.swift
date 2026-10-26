@@ -83,6 +83,10 @@ struct MeetingTranscriberApp: App {
     private var appDelegate // swiftlint:disable:this unused_declaration
     @State private var appState: AppState
     @State private var captionsWindow: LiveCaptionsWindowController?
+    // Keeps the progress updater alive for the app's lifetime; it is seeded in
+    // `init` and observes menu tracking on its own, so nothing reads it back and
+    // the analyzer cannot see that use.
+    @State private var menuProgressUpdater: MenuStageProgressUpdater // swiftlint:disable:this unused_declaration
     @Environment(\.openWindow)
     private var openWindow
 
@@ -94,6 +98,9 @@ struct MeetingTranscriberApp: App {
         let state = AppState(notifier: NotificationManager.shared)
         _appState = State(initialValue: state)
         AppDelegate.install(state)
+        let updater = MenuStageProgressUpdater()
+        updater.observe { [weak state] in state?.pipelineQueue }
+        _menuProgressUpdater = State(initialValue: updater)
         AppPaths.migrateIfNeeded()
         NotificationManager.shared.setUp()
         // The verdict was taken in `AppLauncher.main()`, before `AppState` was
