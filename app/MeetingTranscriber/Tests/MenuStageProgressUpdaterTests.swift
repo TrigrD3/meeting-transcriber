@@ -295,6 +295,39 @@ final class MenuStageProgressUpdaterTests: XCTestCase {
         }
     }
 
+    /// A job called like a queue heading ("Queue", "Processing") comes after the
+    /// real heading. Taking it for the heading would start the walk behind the
+    /// jobs listed before it and freeze their progress text.
+    func testAJobTitledLikeAQueueHeadingDoesNotMoveTheWalkPastEarlierJobs() throws {
+        let dir = try makeTempDirectory(prefix: "menu_progress_heading_title_test")
+        let queue = PipelineQueue(logDir: dir)
+        let first = PipelineJob(
+            meetingTitle: "Zoom Meeting", appName: "Zoom",
+            mixPath: dir.appendingPathComponent("first.wav"),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        let second = PipelineJob(
+            meetingTitle: QueueHeader.queue.title, appName: "Zoom",
+            mixPath: dir.appendingPathComponent("second.wav"),
+            appPath: nil, micPath: nil, micDelay: 0,
+        )
+        queue.enqueue(first)
+        queue.enqueue(second)
+        queue.updateJobState(id: first.id, to: .diarizing)
+        queue.updateJobState(id: second.id, to: .transcribing)
+        let heading = NSMenuItem(title: QueueHeader.processing.title, action: nil, keyEquivalent: "")
+        heading.isEnabled = false
+        let menu = Self.menu(for: [first, second], in: queue, above: [heading])
+
+        MenuStageProgressUpdater().refresh(menu: menu, queue: queue)
+
+        let progress = menu.items.map(\.title).filter { $0.hasPrefix("Diarizing... ") || $0.hasPrefix("Transcribing... ") }
+        XCTAssertEqual(progress.count, 2, "\(progress)")
+        guard progress.count == 2 else { return }
+        XCTAssertTrue(progress[0].hasPrefix("Diarizing... "), progress[0])
+        XCTAssertTrue(progress[1].hasPrefix("Transcribing... "), progress[1])
+    }
+
     /// The rows SwiftUI emits for each job: a disabled title, a disabled state
     /// row, an enabled Cancel, and a separator between jobs.
     private static func menu(

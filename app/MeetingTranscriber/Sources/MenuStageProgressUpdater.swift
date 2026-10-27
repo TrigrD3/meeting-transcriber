@@ -77,13 +77,15 @@ final class MenuStageProgressUpdater {
     /// order (auto-titles such as "Zoom Meeting" repeat), and an enabled action
     /// row can never be taken for a title, whatever a meeting is called.
     ///
-    /// The walk starts below the queue heading. Above it sit the running
+    /// The walk starts below the queue heading, the first row carrying one of the
+    /// heading titles: it precedes every job, so a job called "Queue" or
+    /// "Processing" cannot be taken for it. Above it sit the running
     /// meeting's title, an error line and the status detail, and a recording
     /// that shares a job's auto-title would otherwise take that job's place.
     /// Without a heading in the menu the walk starts at the top, as before.
     func refresh(menu: NSMenu, queue: PipelineQueue) {
         let items: [NSMenuItem] = menu.items
-        var cursor = items.lastIndex { item in
+        var cursor = items.firstIndex { item in
             !item.isEnabled && !item.isSeparatorItem && Self.queueHeaderTitles.contains(item.title)
         }.map { $0 + 1 } ?? 0
         for job in queue.jobs {
