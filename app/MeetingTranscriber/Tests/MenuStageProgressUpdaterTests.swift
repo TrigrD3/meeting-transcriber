@@ -404,10 +404,7 @@ final class MenuStageProgressUpdaterTests: XCTestCase {
     }
 
     private func waitForTitleChange(_ item: NSMenuItem, from initial: String) async {
-        let deadline = ContinuousClock.now + .seconds(3)
-        while item.title == initial, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        await waitFor({ item.title != initial }, timeout: .seconds(3))
     }
 }
 

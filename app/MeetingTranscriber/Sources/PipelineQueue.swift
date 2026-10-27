@@ -170,6 +170,9 @@ class PipelineQueue {
     /// When the current `.transcribing`/`.diarizing`/`.generatingProtocol` state
     /// was entered, per job — so `updateJobState` can record the state's duration
     /// on exit (keyed by job to stay correct if transitions ever interleave).
+    /// Ignored by observation on purpose: no view needs a re-render when a stage
+    /// starts, because `jobs[].state` is observed on its own, and a view that read
+    /// this dictionary would be rebuilt on every transition for no gain.
     @ObservationIgnored private var stageStartByJob: [UUID: ContinuousClock.Instant] = [:]
     /// Audio length (seconds) each job processed, captured when transcription
     /// completes, so stage durations can be normalised into an RTF.
@@ -815,8 +818,7 @@ class PipelineQueue {
     /// observation; the native menu updater owns the changing text.
     func elapsedSeconds(forJobID id: UUID, at instant: ContinuousClock.Instant = ContinuousClock.now) -> TimeInterval {
         guard let start = stageStartByJob[id] else { return 0 }
-        let elapsed = instant - start
-        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        return (instant - start).inSeconds
     }
 
     // MARK: - Stage timing metrics
@@ -831,10 +833,7 @@ class PipelineQueue {
         // boundary; ignore it so it neither logs a partial event nor resets the start.
         guard oldState != newState else { return }
         if let leaving = StageKind(jobState: oldState), let start = stageStartByJob.removeValue(forKey: jobID) {
-            let elapsed = ContinuousClock.now - start
-            let seconds = Double(elapsed.components.seconds)
-                + Double(elapsed.components.attoseconds) / 1e18
-            logStageTiming(stage: leaving, wallClock: seconds, jobID: jobID)
+            logStageTiming(stage: leaving, wallClock: (ContinuousClock.now - start).inSeconds, jobID: jobID)
         }
         if StageKind(jobState: newState) != nil {
             stageStartByJob[jobID] = ContinuousClock.now
@@ -1000,5 +999,12 @@ extension PipelineQueue: SpeakerNamingSessionDelegate {
         // holds nothing would take the front of the queue. Records rather than
         // overwrites; see `previousSidecarOutputDirs`.
         if let wroteSidecarsIn { jobs[idx].recordSidecarOutputDir(wroteSidecarsIn) }
+    }
+}
+
+private extension Duration {
+    /// Whole and fractional seconds as one `Double`.
+    var inSeconds: TimeInterval {
+        Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 }

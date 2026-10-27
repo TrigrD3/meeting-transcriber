@@ -245,6 +245,12 @@ struct MenuBarView: View {
 
     // MARK: - Helpers
 
+    /// Each job is a run of flat rows: a title, then a state row, then its
+    /// actions. `MenuStageProgressUpdater` finds a job's state row by that order
+    /// (below the queue heading, jobs in queue order), so a disabled row put
+    /// between the title and the state row, or a changed order, breaks the
+    /// live progress text without any compile error. Keep the order, or change
+    /// the updater and its tests with it.
     @ViewBuilder
     private func jobRow(_ job: PipelineJob, index: Int) -> some View {
         Text(job.meetingTitle)
@@ -278,7 +284,7 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private func jobStateLabel(_ job: PipelineJob) -> some View {
-        if [.transcribing, .diarizing, .generatingProtocol].contains(job.state) {
+        if StageKind(jobState: job.state) != nil {
             MenuStageProgressLabel(text: MenuStageProgressUpdater.progressText(job: job, queue: pipelineQueue))
         } else if job.state == .error, let msg = job.error {
             Text(msg)

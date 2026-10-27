@@ -7,7 +7,6 @@ import Combine
 final class MenuStageProgressUpdater {
     private var timer: Timer?
     private weak var trackedMenu: NSMenu?
-    private weak var queue: PipelineQueue?
     private var queueProvider: (@MainActor () -> PipelineQueue?)?
     private var subscriptions: Set<AnyCancellable> = []
 
@@ -35,10 +34,9 @@ final class MenuStageProgressUpdater {
             .store(in: &subscriptions)
     }
 
-    func beginTracking(menu: NSMenu, queue: PipelineQueue) {
+    private func beginTracking(menu: NSMenu, queue: PipelineQueue) {
         timer?.invalidate()
         trackedMenu = menu
-        self.queue = queue
         refresh(menu: menu, queue: queue)
         let timer = Timer(timeInterval: 1, repeats: true) { @Sendable [weak self] timer in
             guard let self else {
@@ -49,7 +47,7 @@ final class MenuStageProgressUpdater {
             // explicitly rather than inheriting it in the timer callback.
             Task { @MainActor in
                 guard let menu = self.trackedMenu,
-                      let queue = self.queueProvider?() ?? self.queue else { return }
+                      let queue = self.queueProvider?() else { return }
                 self.refresh(menu: menu, queue: queue)
             }
         }
@@ -57,12 +55,11 @@ final class MenuStageProgressUpdater {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    func endTracking(menu: NSMenu) {
+    private func endTracking(menu: NSMenu) {
         guard trackedMenu === menu else { return }
         timer?.invalidate()
         timer = nil
         trackedMenu = nil
-        queue = nil
     }
 
     /// Every heading `MenuBarView` can put above the job list. All of them, not
