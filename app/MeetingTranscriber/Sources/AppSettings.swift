@@ -104,7 +104,7 @@ final class AppSettings {
     /// Backing store. Production callers pass nothing → `.standard`. Tests
     /// inject their own `UserDefaults(suiteName:)` so parallel test
     /// processes don't race on the shared on-disk plist.
-    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored let defaults: UserDefaults
 
     /// Keychain account backing `openAIAPIKey`. Production callers pass
     /// nothing → the real account. Tests inject a unique account so they never
@@ -120,6 +120,9 @@ final class AppSettings {
     /// use for its own Anthropic key — the user opts a key into this app
     /// specifically, rather than reusing a credential another tool manages.
     @ObservationIgnored private let claudeAPIKeyAccount: String
+
+    /// Keychain account backing `notionAPIKey`, same injection reasoning as above.
+    @ObservationIgnored let notionAPIKeyAccount: String
 
     // MARK: - Apps to Watch
 
@@ -613,11 +616,13 @@ final class AppSettings {
         defaults: UserDefaults = .standard,
         apiKeyAccount: String = "openAIAPIKey",
         claudeAPIKeyAccount: String = "claudeAPIKey",
+        notionAPIKeyAccount: String = "notionAPIKey",
         defaultOutputDir: URL = AppPaths.downloadsProtocolsDir,
     ) {
         self.defaults = defaults
         self.apiKeyAccount = apiKeyAccount
         self.claudeAPIKeyAccount = claudeAPIKeyAccount
+        self.notionAPIKeyAccount = notionAPIKeyAccount
         self.defaultOutputDir = defaultOutputDir
 
         watchTeams = defaults.object(forKey: "watchTeams") as? Bool ?? true
