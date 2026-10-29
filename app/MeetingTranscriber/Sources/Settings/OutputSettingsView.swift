@@ -43,6 +43,11 @@ struct OutputSettingsView: View {
     @State private var didAttemptConnectionTest = false
     @State private var showResetPromptConfirmation = false
     @State private var hasCustomPrompt = false
+    @State private var testingNotion = false
+    @State private var notionConnectionResult: ConnectionTestResult?
+    @State private var notionParentPageInput: String = ""
+    @State private var initializingNotionDatabase = false
+    @State private var notionInitResult: ConnectionTestResult?
 
     enum ConnectionTestResult {
         case success(String)
@@ -105,6 +110,9 @@ struct OutputSettingsView: View {
             }
             .accessibilityIdentifier(A11yID.protocolSection)
             .recordOnlyDisabled(settings.recordOnly)
+
+            notionSection
+                .recordOnlyDisabled(settings.recordOnly)
         }
         .formStyle(.grouped)
         .onAppear {
@@ -300,6 +308,154 @@ struct OutputSettingsView: View {
             case let .failure(error):
                 availableModels = []
                 connectionTestResult = .failure(error.localizedDescription)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var notionSection: some View {
+        Section("Notion Database Export") {
+            Toggle("Export to Notion Database", isOn: $settings.notionExportEnabled)
+                .accessibilityIdentifier(A11yID.notionExportToggle)
+
+            if settings.notionExportEnabled {
+                Toggle("Skip local markdown file on success", isOn: $settings.notionSkipLocalMarkdownOnSuccess)
+                    .accessibilityIdentifier(A11yID.notionSkipLocalMarkdownToggle)
+
+                HStack {
+                    Text("API Token")
+                    Spacer()
+                    SecureField("ntn_... or secret_...", text: $settings.notionAPIKey)
+                        .frame(width: 250)
+                        .accessibilityIdentifier(A11yID.notionAPIKeyField)
+                }
+                Text("Your Notion Internal Integration Secret or API Token.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("Database ID")
+                    Spacer()
+                    TextField("32-character ID or database URL", text: $settings.notionDatabaseID)
+                        .frame(width: 250)
+                        .accessibilityIdentifier(A11yID.notionDatabaseIDField)
+                }
+
+                HStack {
+                    Button("Test Connection") {
+                        testNotionConnection()
+                    }
+                    .accessibilityIdentifier(A11yID.notionTestConnectionButton)
+                    .disabled(testingNotion || settings.notionAPIKey.isEmpty || settings.notionDatabaseID.isEmpty)
+
+                    if testingNotion {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if let result = notionConnectionResult {
+                        switch result {
+                        case let .success(message):
+                            Label(message, systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                        case let .failure(message):
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                                .font(.caption)
+                        }
+                    }
+                    Spacer()
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Need a new database in Notion?")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text("Paste your Notion page URL (or parent page ID) to automatically create the \"Meeting Transcriber\" database.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Text("Parent Page")
+                        Spacer()
+                        TextField("Page URL or 32-character ID", text: $notionParentPageInput)
+                            .frame(width: 250)
+                            .accessibilityIdentifier(A11yID.notionParentPageField)
+                    }
+
+                    HStack {
+                        Button("Initialize Database in Notion") {
+                            initializeNotionDatabase()
+                        }
+                        .accessibilityIdentifier(A11yID.notionInitDatabaseButton)
+                        .disabled(initializingNotionDatabase || settings.notionAPIKey.isEmpty || notionParentPageInput.isEmpty)
+
+                        if initializingNotionDatabase {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if let result = notionInitResult {
+                            switch result {
+                            case let .success(message):
+                                Label(message, systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .font(.caption)
+                            case let .failure(message):
+                                Label(message, systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.caption)
+                            }
+                        }
+                        Spacer()
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .accessibilityIdentifier(A11yID.notionSection)
+    }
+
+    private func testNotionConnection() {
+        guard !settings.notionAPIKey.isEmpty, !settings.notionDatabaseID.isEmpty else { return }
+        testingNotion = true
+        notionConnectionResult = nil
+        let client = NotionClient(apiKey: settings.notionAPIKey)
+        let dbID = settings.notionDatabaseID
+        Task {
+            do {
+                let dbTitle = try await client.validateDatabase(id: dbID)
+                await MainActor.run {
+                    notionConnectionResult = .success("Connected to \"\(dbTitle)\"")
+                    testingNotion = false
+                }
+            } catch {
+                await MainActor.run {
+                    notionConnectionResult = .failure(error.localizedDescription)
+                    testingNotion = false
+                }
+            }
+        }
+    }
+
+    private func initializeNotionDatabase() {
+        guard !settings.notionAPIKey.isEmpty, !notionParentPageInput.isEmpty else { return }
+        initializingNotionDatabase = true
+        notionInitResult = nil
+        let client = NotionClient(apiKey: settings.notionAPIKey)
+        let parentInput = notionParentPageInput
+        Task {
+            do {
+                let createdID = try await client.createDatabase(parentPageID: parentInput)
+                await MainActor.run {
+                    settings.notionDatabaseID = createdID
+                    notionInitResult = .success("Created \"Meeting Transcriber\" database")
+                    initializingNotionDatabase = false
+                }
+            } catch {
+                await MainActor.run {
+                    notionInitResult = .failure(error.localizedDescription)
+                    initializingNotionDatabase = false
+                }
             }
         }
     }
