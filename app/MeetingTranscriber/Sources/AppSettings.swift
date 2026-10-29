@@ -121,6 +121,9 @@ final class AppSettings {
     /// specifically, rather than reusing a credential another tool manages.
     @ObservationIgnored private let claudeAPIKeyAccount: String
 
+    /// Keychain account backing `notionAPIKey`, same injection reasoning as above.
+    @ObservationIgnored let notionAPIKeyAccount: String
+
     // MARK: - Apps to Watch
 
     var watchTeams: Bool {
@@ -613,11 +616,13 @@ final class AppSettings {
         defaults: UserDefaults = .standard,
         apiKeyAccount: String = "openAIAPIKey",
         claudeAPIKeyAccount: String = "claudeAPIKey",
+        notionAPIKeyAccount: String = "notionAPIKey",
         defaultOutputDir: URL = AppPaths.downloadsProtocolsDir,
     ) {
         self.defaults = defaults
         self.apiKeyAccount = apiKeyAccount
         self.claudeAPIKeyAccount = claudeAPIKeyAccount
+        self.notionAPIKeyAccount = notionAPIKeyAccount
         self.defaultOutputDir = defaultOutputDir
 
         watchTeams = defaults.object(forKey: "watchTeams") as? Bool ?? true
