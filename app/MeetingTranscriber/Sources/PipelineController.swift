@@ -320,6 +320,16 @@ final class PipelineController {
                 TerminologyNormalizer(rulesText: settings?.terminologyRulesText ?? "")
             },
             stageTimingLog: StageTimingLog(path: queueEnvironment.stageTimingLog),
+            notionExporterFactory: { [weak settings] in
+                guard let settings, settings.notionExportEnabled,
+                      !settings.notionAPIKey.isEmpty, !settings.notionDatabaseID.isEmpty else {
+                    return nil
+                }
+                return NotionClient(apiKey: settings.notionAPIKey, databaseID: settings.notionDatabaseID)
+            },
+            notionSkipLocalMarkdownProvider: { [weak settings] in
+                settings?.notionSkipLocalMarkdownOnSuccess ?? true
+            },
             terminalJobStore: terminalJobStore,
             securityScope: queueEnvironment.securityScope,
         )
