@@ -970,18 +970,59 @@ extension PipelineQueue {
         let markdown = outputOptions.includeFullTranscriptInProtocol
             ? protocolMD + "\n\n---\n\n## Full Transcript\n\n" + transcript
             : protocolMD
-        do {
-            let mdPath = try ProtocolGenerator.saveProtocol(markdown, basename: basename, dir: protocolsDir)
-            logger.info("[\(shortID, privacy: .public)] protocol_saved file=\(mdPath.lastPathComponent, privacy: .private)")
-            if let idx = jobs.firstIndex(where: { $0.id == jobID }) {
-                jobs[idx].protocolPath = mdPath
+
+        var exportedToNotion = false
+        if let notionExporterFactory, let exporter = notionExporterFactory() {
+            do {
+                let tags = Self.extractSpeakerTags(from: transcript)
+                let displayTitle = ProtocolGenerator.extractTitle(from: protocolMD) ?? title
+                let pageResult = try await exporter.exportMeeting(
+                    title: displayTitle,
+                    date: meetingStartTime,
+                    tags: tags,
+                    markdown: protocolMD,
+                    transcript: outputOptions.includeFullTranscriptInProtocol ? transcript : nil
+                )
+                exportedToNotion = true
+                logger.info("[\(shortID, privacy: .public)] notion_exported page=\(pageResult.url ?? pageResult.pageID, privacy: .private)")
+            } catch {
+                logger.warning("[\(shortID, privacy: .public)] notion_export_failed error=\(error.localizedDescription, privacy: .public)")
+                addWarning(id: jobID, "Notion export failed; saved locally as backup")
             }
-        } catch {
-            // Private, unlike the generation failure above: a file-write
-            // CocoaError names the file, and the file name is the meeting title.
-            logger.warning("[\(shortID, privacy: .public)] protocol_save_failed error=\(error.localizedDescription, privacy: .private)")
-            addWarning(id: jobID, "Protocol was generated but could not be saved; the transcript was saved")
         }
+
+        let shouldSaveLocalMD = !exportedToNotion || !notionSkipLocalMarkdownProvider()
+        if shouldSaveLocalMD {
+            do {
+                let mdPath = try ProtocolGenerator.saveProtocol(markdown, basename: basename, dir: protocolsDir)
+                logger.info("[\(shortID, privacy: .public)] protocol_saved file=\(mdPath.lastPathComponent, privacy: .private)")
+                if let idx = jobs.firstIndex(where: { $0.id == jobID }) {
+                    jobs[idx].protocolPath = mdPath
+                }
+            } catch {
+                // Private, unlike the generation failure above: a file-write
+                // CocoaError names the file, and the file name is the meeting title.
+                logger.warning("[\(shortID, privacy: .public)] protocol_save_failed error=\(error.localizedDescription, privacy: .private)")
+                addWarning(id: jobID, "Protocol was generated but could not be saved; the transcript was saved")
+            }
+        }
+    }
+
+    /// Extracts speaker names and standard tags from transcript to populate Notion multi-select tags.
+    static func extractSpeakerTags(from transcript: String) -> [String] {
+        var tags: Set<String> = ["Meeting"]
+        let pattern = #"\[([A-Za-z0-9_\- ]+)\]"#
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let nsString = transcript as NSString
+            let matches = regex.matches(in: transcript, range: NSRange(location: 0, length: nsString.length))
+            for match in matches where match.numberOfRanges > 1 {
+                let tag = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !tag.isEmpty && tag != "Remote" {
+                    tags.insert(tag)
+                }
+            }
+        }
+        return Array(tags).sorted()
     }
 
     /// Gives a job's artifacts the stem built from the AI meeting title

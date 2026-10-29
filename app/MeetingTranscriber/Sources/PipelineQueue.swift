@@ -140,6 +140,11 @@ class PipelineQueue {
 
     let completedJobLifetime: TimeInterval
 
+    /// Optional Notion exporter factory. Returns nil when Notion export is disabled.
+    let notionExporterFactory: (() -> (any NotionExporting)?)?
+    /// Returns whether the local .md file should be skipped on successful Notion export.
+    let notionSkipLocalMarkdownProvider: () -> Bool
+
     /// Process-wide claim on the runs currently executing, so a replacement
     /// queue cannot start a job the queue it replaced is still working on.
     /// Defaults to the shared instance; tests inject their own to stay isolated
@@ -294,6 +299,8 @@ class PipelineQueue {
         snapshotWriter: @escaping @Sendable ([PipelineJob], URL) throws -> Void = PipelineSnapshot.save,
         stageTimingLog: StageTimingLog? = nil,
         completedJobLifetime: TimeInterval = 60,
+        notionExporterFactory: (() -> (any NotionExporting)?)? = nil,
+        notionSkipLocalMarkdownProvider: (() -> Bool)? = nil,
         terminalJobStore: TerminalJobStore? = nil,
         inFlightRuns: InFlightRunRegistry? = nil,
         echoCancellationEnabled: @escaping () -> Bool = { false },
@@ -330,6 +337,8 @@ class PipelineQueue {
         terminologyNormalizer = { TerminologyNormalizer() }
         self.stageTimingLog = stageTimingLog
         self.completedJobLifetime = completedJobLifetime
+        self.notionExporterFactory = notionExporterFactory
+        self.notionSkipLocalMarkdownProvider = notionSkipLocalMarkdownProvider ?? { false }
         self.terminalJobStore = terminalJobStore
         self.inFlightRuns = inFlightRuns ?? .shared
         naming = SpeakerNamingSession(
@@ -412,6 +421,8 @@ class PipelineQueue {
         terminologyNormalizer: @escaping () -> TerminologyNormalizer = { TerminologyNormalizer() },
         stageTimingLog: StageTimingLog? = nil,
         completedJobLifetime: TimeInterval = 60,
+        notionExporterFactory: (() -> (any NotionExporting)?)? = nil,
+        notionSkipLocalMarkdownProvider: (() -> Bool)? = nil,
         terminalJobStore: TerminalJobStore? = nil,
         inFlightRuns: InFlightRunRegistry? = nil,
         securityScope: SecurityScopeAccess = .live,
@@ -455,6 +466,8 @@ class PipelineQueue {
         self.terminologyNormalizer = terminologyNormalizer
         self.stageTimingLog = stageTimingLog
         self.completedJobLifetime = completedJobLifetime
+        self.notionExporterFactory = notionExporterFactory
+        self.notionSkipLocalMarkdownProvider = notionSkipLocalMarkdownProvider ?? { false }
         self.terminalJobStore = terminalJobStore
         self.inFlightRuns = inFlightRuns ?? .shared
         naming = SpeakerNamingSession(
