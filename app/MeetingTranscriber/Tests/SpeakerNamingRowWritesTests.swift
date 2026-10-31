@@ -8,7 +8,7 @@ import XCTest
 ///
 /// Both are the shape of defect that issue #700 was, a write reaching the
 /// wrong row, and neither was assertable while the row state lived in `@State`.
-/// Why that is, and what it rules out, is in CLAUDE.md's GUI Testing section,
+/// Why that is, and what it rules out, is in docs/architecture/gui-testing.md,
 /// rung 2; `SpeakerNamingRowState` is the object that makes these tests
 /// possible.
 @MainActor

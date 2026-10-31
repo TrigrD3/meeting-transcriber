@@ -5,7 +5,7 @@ name: E2E (Browser Meeting)
 # answers the consent prompt over RPC, and asserts the record-only _app.wav is
 # non-silent. Chrome is the primary (builds + runs on every event); Brave, Edge
 # and Chromium run nightly/dispatch as best-effort forks reusing that bundle.
-# Background: CLAUDE.md > E2E Architecture. Driver: scripts/e2e-browser.sh.
+# Background: e2e-architecture skill. Driver: scripts/e2e-browser.sh.
 #
 # NON-GATING CANARY: not referenced by any required check and not listed in
 # .github/tag-ruleset.json. Red is reported (no continue-on-error) but never

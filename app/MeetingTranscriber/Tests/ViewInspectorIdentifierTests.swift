@@ -3,7 +3,7 @@ import SwiftUI
 import ViewInspector
 import XCTest
 
-/// Pins the capability the Identifiers rule in `CLAUDE.md` tells people to rely
+/// Pins the capability the Identifiers rule in `gui-testing.md` tells people to rely
 /// on: that `Picker` and `Stepper` are locatable by an accessibility identifier
 /// attached to the control itself.
 ///

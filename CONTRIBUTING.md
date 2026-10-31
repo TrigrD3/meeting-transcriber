@@ -84,7 +84,7 @@ origin/<your-branch>` instead of pushing again.
 
 ### AI-assisted development
 
-The project includes a [`CLAUDE.md`](CLAUDE.md) with full architecture context. If you use [Claude Code](https://docs.anthropic.com/en/docs/claude-code), we recommend the [`/git-workflow` skill](https://github.com/pasrom/dotclaude/blob/main/skills/git-workflow/SKILL.md) for commit creation — install it via the [dotclaude](https://github.com/pasrom/dotclaude) collection.
+The project includes a [`CLAUDE.md`](CLAUDE.md) with project rules and a router to the architecture docs. If you use [Claude Code](https://docs.anthropic.com/en/docs/claude-code), we recommend the [`/git-workflow` skill](https://github.com/pasrom/dotclaude/blob/main/skills/git-workflow/SKILL.md) for commit creation — install it via the [dotclaude](https://github.com/pasrom/dotclaude) collection.
 
 ### Tests
 
@@ -111,7 +111,7 @@ Use [GitHub Issues](https://github.com/pasrom/meeting-transcriber/issues) to rep
 
 - All code and UI text in English
 - Keep it simple — avoid over-engineering and premature abstractions
-- See [`CLAUDE.md`](CLAUDE.md) for architecture conventions
+- See [`CLAUDE.md`](CLAUDE.md) and its router for architecture conventions
 
 ## License
 

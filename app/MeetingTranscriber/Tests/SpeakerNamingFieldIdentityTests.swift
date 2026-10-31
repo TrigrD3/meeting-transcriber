@@ -21,7 +21,7 @@ import XCTest
 /// representable is gone (issue #702) and the plain `TextField` in its place
 /// takes a fresh binding on every update; this test is what says so for a
 /// hosted, reused field, which ViewInspector never instantiates. The full
-/// history of why the representable existed and was removed is in CLAUDE.md.
+/// history of why the representable existed and was removed is in issue #702.
 ///
 /// The measured mechanism is the shift, not a dropped row: a field whose label
 /// disappears leaves the window and loses first-responder status, so nothing
@@ -88,11 +88,11 @@ final class SpeakerNamingFieldIdentityTests: XCTestCase {
     /// The field for `label`, found by the seed it shows: `seed(label)` is
     /// unique per label, so the editable field whose value equals it is that
     /// row (valid while the field still shows its seed, i.e. before it is
-    /// typed into). By value rather than by window position, which CLAUDE.md's
+    /// typed into). By value rather than by window position, which gui-testing.md's
     /// GUI-testing guidance warns against, or by identifier, which does not
     /// survive to the backing `NSTextField` and whose AX form is not served to
-    /// a unit test (see the screen-lock note in CLAUDE.md's GUI Testing
-    /// section). `shownValues` is checked before each lookup so a half-rendered
+    /// a unit test (see the screen-lock note in gui-testing.md).
+    /// `shownValues` is checked before each lookup so a half-rendered
     /// switch is never read.
     private func field(_ label: String, in view: NSView) -> NSTextField? {
         nameFields(in: view).first { $0.stringValue == Self.seed(label) }

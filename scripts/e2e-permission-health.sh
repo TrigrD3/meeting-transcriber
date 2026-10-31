@@ -19,7 +19,7 @@
 #   - The #446 fixes holding on the real (silent-input, granted) runner
 #
 # Requires: granted Microphone + Screen Recording for the dev .app (see the
-# self-hosted runner setup in CLAUDE.md). Accessibility is logged, not asserted —
+# self-hosted runner setup in the e2e-architecture skill). Accessibility is logged, not asserted —
 # its grant is not part of the standard runner setup.
 #
 # Usage: bash scripts/e2e-permission-health.sh [--no-build]
@@ -238,7 +238,7 @@ echo "  (accessibility=$AX — informational, not asserted)"
 if [ "$fail" = true ]; then
     echo "Full permissionHealth JSON:" >&2
     echo "$STATE_JSON" | jq .permissionHealth >&2 || true
-    die "permission probe not healthy: 'broken' = #446 regression; 'denied'/'notDetermined' = either the app was launched in a way TCC attributes elsewhere, or the grant lapsed on the runner (re-grant in the GUI session, see CLAUDE.md). Recording lanes green in the same run points at the first, but does not settle it for Screen Recording, which the audio tap can do without"
+    die "permission probe not healthy: 'broken' = #446 regression; 'denied'/'notDetermined' = either the app was launched in a way TCC attributes elsewhere, or the grant lapsed on the runner (re-grant in the GUI session, see the e2e-architecture skill). Recording lanes green in the same run points at the first, but does not settle it for Screen Recording, which the audio tap can do without"
 fi
 
 echo "OK — Screen Recording + Microphone probes report healthy on the granted runner"
