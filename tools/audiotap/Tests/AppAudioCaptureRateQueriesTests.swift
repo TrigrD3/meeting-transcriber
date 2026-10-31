@@ -98,7 +98,7 @@ final class AppAudioCaptureRateQueriesTests: XCTestCase {
 
     func testEveryRungPrintsTheWordsTheDocumentationQuotes() {
         // These strings are not decoration. The capture log line is documented
-        // in CLAUDE.md down to its example text, and the manual check for a
+        // in docs/architecture/recording.md down to its example text, and the manual check for a
         // non-default device rate tells the reader which one to expect. They
         // drifted apart once already, when the label stopped being reflected off
         // the Swift case name and nothing failed. Pinning them makes a rename a

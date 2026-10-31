@@ -782,7 +782,7 @@ final class SpeakerNamingViewTests: XCTestCase { // swiftlint:disable:this type_
     /// added there as well: a job diarized in Nemotron 3 mode opens the
     /// dialog with that mode selected, and without its segment the picker
     /// would hold a selection it cannot show. The picker's own write lands in
-    /// `@State` and cannot be read back here (see CLAUDE.md, GUI Testing), so
+    /// `@State` and cannot be read back here (see gui-testing.md), so
     /// this pins the segment, the cap hint and the mode the Re-run carries.
     func testRerunWithNemotronModeCarriesModeAndShowsCap() throws {
         var captured: PipelineQueue.SpeakerNamingResult?

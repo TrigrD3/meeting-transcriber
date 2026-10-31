@@ -8,7 +8,7 @@
 #
 # This is the production-app E2E path, intentionally separate from the
 # fixture-based component E2E tests in `app/MeetingTranscriber/Tests/*E2E*.swift`
-# (which run on PR-CI). Rationale and history: see CLAUDE.md > E2E architecture.
+# (which run on PR-CI). Rationale and history: see the e2e-architecture skill.
 #
 # Prerequisites on the runner host (one-time setup):
 #   - Xcode at /Applications/Xcode.app (xcode-select pointed there)
@@ -474,7 +474,7 @@ RPC_BASE="http://127.0.0.1:9876"
 OUTPUT_DIR="$APP_HOME/Downloads/MeetingTranscriber"
 RECORDINGS_DIR="$OUTPUT_DIR/recordings"
 # `find -newer` marker so cleanup only touches THIS run's files — never
-# pre-existing user data (see CLAUDE.md feedback on destructive FS scans).
+# pre-existing user data.
 RECORD_ONLY_MARKER="/tmp/e2e-app-record-only-marker.$$"
 
 [ -n "$SIMULATOR_FIXTURE" ] || SIMULATOR_FIXTURE="$DEFAULT_FIXTURE"

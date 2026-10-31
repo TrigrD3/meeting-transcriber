@@ -1,6 +1,6 @@
 name: E2E (Production App)
 
-# Live-recording E2E. Background and rationale: CLAUDE.md > E2E Architecture.
+# Live-recording E2E. Background and rationale: e2e-architecture skill.
 # Runner prerequisites: scripts/setup-self-hosted-runner.sh.
 
 on:

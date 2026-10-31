@@ -18,7 +18,7 @@
 # must be installed; no mic is needed (noMic) and TCC audio-capture grants are
 # the same ones e2e-app.sh relies on.
 #
-# See CLAUDE.md > E2E architecture, and scripts/setup-self-hosted-runner.sh.
+# See the e2e-architecture skill, and scripts/setup-self-hosted-runner.sh.
 
 set -euo pipefail
 

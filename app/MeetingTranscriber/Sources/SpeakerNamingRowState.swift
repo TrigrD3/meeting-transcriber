@@ -11,7 +11,7 @@ import Observation
 ///
 /// One `@Observable` object rather than one `@State` per field, because a
 /// `@State` write from a ViewInspector tap is unobservable: the measurement and
-/// the alternatives it rules out are in CLAUDE.md's GUI Testing section, rung 2.
+/// the alternatives it rules out are in docs/architecture/gui-testing.md, rung 2.
 /// With the state in an object, the object a test holds is the object the
 /// action writes to, which is what `SpeakerNamingRowWritesTests` asserts on.
 @Observable
