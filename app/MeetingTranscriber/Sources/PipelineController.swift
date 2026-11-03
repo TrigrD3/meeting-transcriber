@@ -391,7 +391,8 @@ final class PipelineController {
 
             case .error:
                 if let err = job.error {
-                    notifier.notify(title: "Error", body: err)
+                    // The cloud error names the cause; the title says where it failed.
+                    notifier.notify(title: job.isCloudFailure ? "Cloud Transcription Failed" : "Error", body: err)
                 }
 
             default:
