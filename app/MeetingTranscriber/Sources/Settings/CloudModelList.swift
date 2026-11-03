@@ -68,27 +68,21 @@ enum CloudModelChoice: Hashable {
 }
 
 /// The cloud Model row: a text field until the server's list arrives, then a
-/// dropdown of it plus "Custom…", which brings the text field back. A saved
-/// model the list lacks shows as Custom, unchanged.
+/// dropdown of it plus "Custom…", which adds a "Model ID" field row below it.
+/// A saved model the list lacks shows as Custom, unchanged.
 struct CloudModelRow: View {
     @Bindable var settings: AppSettings
     var modelList: CloudModelList
 
     var body: some View {
         Group {
-            if !modelList.models.isEmpty {
-                Picker("Model", selection: choice) {
-                    ForEach(modelList.models, id: \.self) { model in
-                        Text(model).tag(CloudModelChoice.listed(model))
-                    }
-                    Text("Custom…").tag(CloudModelChoice.custom)
+            if modelList.models.isEmpty {
+                modelField(label: "Model")
+            } else {
+                modelPicker
+                if choice.wrappedValue == .custom {
+                    modelField(label: "Model ID")
                 }
-                .accessibilityIdentifier(A11yID.cloudTranscriptionModelPicker)
-            }
-            if modelList.models.isEmpty || choice.wrappedValue == .custom {
-                TextField("Model", text: $settings.cloudTranscriptionModel, prompt: Text("whisper-1"))
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier(A11yID.cloudTranscriptionModelField)
             }
             fetchRow
         }
@@ -98,6 +92,22 @@ struct CloudModelRow: View {
                 fetch()
             }
         }
+    }
+
+    private var modelPicker: some View {
+        Picker("Model", selection: choice) {
+            ForEach(modelList.models, id: \.self) { model in
+                Text(model).tag(CloudModelChoice.listed(model))
+            }
+            Text("Custom…").tag(CloudModelChoice.custom)
+        }
+        .accessibilityIdentifier(A11yID.cloudTranscriptionModelPicker)
+    }
+
+    private func modelField(label: String) -> some View {
+        TextField(label, text: $settings.cloudTranscriptionModel, prompt: Text("whisper-1"))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(A11yID.cloudTranscriptionModelField)
     }
 
     private var choice: Binding<CloudModelChoice> {

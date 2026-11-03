@@ -215,6 +215,33 @@ final class CloudModelListTests: XCTestCase {
         XCTAssertEqual(settings.cloudTranscriptionModel, "my-private-model")
     }
 
+    func testSavedListedModelShowsAsSelectedWithoutTheField() async throws {
+        let settings = makeSettings()
+        settings.cloudTranscriptionModel = "whisper-large-v3"
+        let list = await fetched(Self.groqModels)
+        let row = try CloudModelRow(settings: settings, modelList: list).inspect()
+
+        let selected = try row.find(viewWithAccessibilityIdentifier: A11yID.cloudTranscriptionModelPicker)
+            .find(ViewType.Picker.self)
+            .selectedValue(CloudModelChoice.self)
+        XCTAssertEqual(selected, .listed("whisper-large-v3"))
+        XCTAssertThrowsError(try row.find(viewWithAccessibilityIdentifier: A11yID.cloudTranscriptionModelField))
+    }
+
+    func testCustomFieldIsLabelledModelIDNotASecondModel() async throws {
+        let settings = makeSettings()
+        settings.cloudTranscriptionModel = "my-private-model"
+        let list = await fetched(Self.groqModels)
+        let row = try CloudModelRow(settings: settings, modelList: list).inspect()
+
+        let picker = try row.find(viewWithAccessibilityIdentifier: A11yID.cloudTranscriptionModelPicker)
+            .find(ViewType.Picker.self)
+        XCTAssertEqual(try picker.labelView().text().string(), "Model")
+        let field = try row.find(viewWithAccessibilityIdentifier: A11yID.cloudTranscriptionModelField)
+            .find(ViewType.TextField.self)
+        XCTAssertEqual(try field.labelView().text().string(), "Model ID")
+    }
+
     func testRefreshButtonRefetches() async throws {
         let settings = makeSettings()
         let received = serve(Self.groqModels)
