@@ -61,6 +61,9 @@
                 whisperLanguage: whisperLanguage,
                 parakeetLanguage: parakeetLanguage,
                 customVocabularyPath: customVocabularyPath,
+                cloudTranscriptionEnabled: cloudTranscriptionEnabled,
+                cloudTranscriptionBaseURL: cloudTranscriptionBaseURL,
+                cloudTranscriptionModel: cloudTranscriptionModel,
             )
         }
 
