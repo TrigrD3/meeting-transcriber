@@ -79,6 +79,10 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
     private(set) var downloadProgress: Double = 0
     /// Transcription progress (0.0–1.0) based on WhisperKit's 30s window processing.
     private(set) var transcriptionProgress: Double = 0
+    private(set) var transcriptionsInFlight = 0
+    /// Bumped by `unloadModel`. A load that started under an older value
+    /// discards what it built instead of installing it.
+    private var unloadGeneration = 0
     private var pipe: WhisperKit?
     /// Whether a model is loaded, for the load loop in `WhisperKitEngine+ModelLoad.swift`.
     var pipeInstalled: Bool {
@@ -108,10 +112,21 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
         origin: WhisperKitModelOrigin,
         from folder: URL,
         source: WhisperKitModelSource,
+        generation: Int,
     ) async throws {
+        // An unload that landed while this load ran wins, before and after the build.
+        guard generation == unloadGeneration else {
+            dropPipe()
+            return
+        }
         modelState = .loading
         downloadProgress = 1.0
-        pipe = try await source.makePipe(variant, folder)
+        let built = try await source.makePipe(variant, folder)
+        guard generation == unloadGeneration else {
+            dropPipe()
+            return
+        }
+        pipe = built
         modelState = .loaded
 
         // A model change that landed mid-load set `modelVariant` but saw a nil
@@ -119,7 +134,7 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
         // next transcription notice. Dropping it is what makes the attempt
         // superseded, and `loadModel` then runs again for the current variant.
         if modelVariant != variant || modelOrigin != origin {
-            unloadModel()
+            dropPipe()
         }
     }
 
@@ -133,10 +148,11 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
         variant: String,
         origin: WhisperKitModelOrigin,
         source: WhisperKitModelSource,
+        generation: Int,
     ) async -> Bool {
         guard let localFolder = await source.prepareAndLocate(variant) else { return false }
         do {
-            try await adoptPipe(variant: variant, origin: origin, from: localFolder, source: source)
+            try await adoptPipe(variant: variant, origin: origin, from: localFolder, source: source, generation: generation)
             return true
         } catch {
             // Type public, message redacted. Unlike a Cocoa NSError, whose
@@ -179,10 +195,14 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
         let variant = modelVariant
         let origin = modelOrigin
         let source = modelSource(origin)
+        let generation = unloadGeneration
         loadFailureReason = nil
 
-        if await loadFromLocalSnapshot(variant: variant, origin: origin, source: source) {
-            return LoadAttempt(variant: variant, origin: origin, builtPipe: true)
+        if await loadFromLocalSnapshot(variant: variant, origin: origin, source: source, generation: generation) {
+            return LoadAttempt(
+                variant: variant, origin: origin, builtPipe: true,
+                discardedByUnload: generation != unloadGeneration,
+            )
         }
 
         modelState = .downloading
@@ -193,8 +213,11 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
                     self.downloadProgress = progress.fractionCompleted
                 }
             }
-            try await adoptPipe(variant: variant, origin: origin, from: modelFolder, source: source)
-            return LoadAttempt(variant: variant, origin: origin, builtPipe: true)
+            try await adoptPipe(variant: variant, origin: origin, from: modelFolder, source: source, generation: generation)
+            return LoadAttempt(
+                variant: variant, origin: origin, builtPipe: true,
+                discardedByUnload: generation != unloadGeneration,
+            )
         } catch {
             // Same reason as the local branch above: since the download path now
             // also ends in `adoptPipe`, this can carry WhisperKit's path-bearing
@@ -211,7 +234,7 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
             if pipe == nil, variant == modelVariant, origin == modelOrigin {
                 loadFailureReason = WhisperKitLoadFailureReason.describe(error, variant: variant, origin: origin)
             }
-            // A failed *reload* keeps the prior pipe (see `unloadModel`), and the
+            // A failed *reload* keeps the prior pipe (see `dropPipe`), and the
             // state has to say so: `ensureModel` short-circuits on a non-nil pipe
             // and keeps transcribing, so reporting `.unloaded` would have Settings
             // offer "Load Model" and `/state` claim a failed preload while the
@@ -245,14 +268,24 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
         // Whatever failed, it was another model.
         loadFailureReason = nil
         guard pipe != nil else { return }
-        unloadModel()
+        dropPipe()
+    }
+
+    /// Release the model (cloud transcription switched on). Unlike `dropPipe`,
+    /// an in-flight load is discarded too, and the load loop does not treat that
+    /// as a superseded attempt to retry, except for a transcription waiting on
+    /// it (see `loadModel(untilCancelled:)`). A running transcription keeps its
+    /// own pipe reference and finishes.
+    func unloadModel() {
+        unloadGeneration += 1
+        dropPipe()
     }
 
     /// Reset to the unloaded state: drop the loaded pipe and its progress. Shared
-    /// by `applyModelVariant` and `adoptPipe`'s mid-load reconcile. The load
-    /// `catch` deliberately does NOT call this — a failed *reload* keeps the
-    /// prior pipe rather than clobbering a still-good model.
-    private func unloadModel() {
+    /// by `applyModelVariant`, `unloadModel` and `adoptPipe`'s mid-load
+    /// reconcile. The load `catch` deliberately does NOT call this — a failed
+    /// *reload* keeps the prior pipe rather than clobbering a still-good model.
+    private func dropPipe() {
         pipe = nil
         modelState = .unloaded
         downloadProgress = 0
@@ -320,6 +353,8 @@ final class WhisperKitEngine: TranscribingEngine, StreamingTranscribingEngine {
 
     /// Transcribe a WAV file and return structured segments.
     func transcribeSegments(audioPath: URL) async throws -> [TimestampedSegment] {
+        transcriptionsInFlight += 1
+        defer { transcriptionsInFlight -= 1 }
         try await ensureModel()
         guard let decodingClient else {
             throw TranscriptionError.modelNotLoaded()
@@ -507,6 +542,9 @@ struct LoadAttempt: Sendable {
     /// True when `adoptPipe` ran through, whether or not the reconcile then
     /// discarded what it installed.
     let builtPipe: Bool
+    /// True when `unloadModel` ran during the attempt, so whatever it built was
+    /// released on purpose and is not a superseded attempt to run again.
+    var discardedByUnload = false
 
     /// Whether the caller has to run another attempt after observing this one.
     ///

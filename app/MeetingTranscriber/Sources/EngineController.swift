@@ -64,34 +64,54 @@ final class EngineController {
         #endif
     }
 
-    init(settings: AppSettings, warmupQueue: ModelWarmupQueue = ModelWarmupQueue()) {
+    /// The engines `activeTranscriptionEngine` and the cloud-toggle model
+    /// lifecycle act on. The two instances above, unless a test injects fakes.
+    private let localWhisperKit: any TranscribingEngine
+    private let localParakeet: any TranscribingEngine
+
+    /// Cloud was switched on and the local models are still to be released,
+    /// once no local transcription is running. Cleared by switching cloud off.
+    private var unloadPending = false
+    private var waitingForIdleEngines = false
+    private var cloudEnabled: Bool
+
+    init(
+        settings: AppSettings,
+        warmupQueue: ModelWarmupQueue = ModelWarmupQueue(),
+        localEnginesForTesting: (whisperKit: any TranscribingEngine, parakeet: any TranscribingEngine)? = nil,
+    ) {
         self.settings = settings
         self.warmupQueue = warmupQueue
         self.whisperKit = Self.makeWhisperKit()
         self.parakeetEngine = Self.makeParakeet()
+        self.localWhisperKit = localEnginesForTesting?.whisperKit ?? whisperKit
+        self.localParakeet = localEnginesForTesting?.parakeet ?? parakeetEngine
         self.legacyWhisperModels = Self.makeLegacyWhisperModels(settings: settings)
+        self.cloudEnabled = settings.cloudTranscriptionEnabled
 
         // Bring engines in line with the current settings up front so the first
         // transcription doesn't run against stale defaults, then start observing
         // for runtime changes.
         syncEngineSettings()
         observeEngineSettings()
+        observeCloudSetting()
     }
 
     /// The active transcription engine based on the current settings.
     var activeTranscriptionEngine: any TranscribingEngine {
         switch settings.transcriptionEngine {
         case .parakeet:
-            parakeetEngine
+            localParakeet
 
         case .whisperKit:
-            whisperKit
+            localWhisperKit
         }
     }
 
     /// Pre-load the active engine's model (applying its settings-derived config
     /// first) so the first transcription doesn't pay the cold-load cost. Called
-    /// from the menu-bar `.task` at launch.
+    /// from the menu-bar `.task` at launch. Skipped while cloud transcription is
+    /// on, so the local model takes no memory.
     func preloadActiveModel() async {
         // Push settings into the active engine through the one canonical sync
         // (idempotent — it already ran at init), then load it. Routing the
@@ -100,8 +120,55 @@ final class EngineController {
         syncEngineSettings()
         // Serialize against the live-caption model warm-up so the two big CoreML
         // loads don't compile at once. `run` awaits the load, so the caller still
-        // returns only after the model is loaded.
-        await warmupQueue.run { [self] in await activeTranscriptionEngine.loadModel() }
+        // returns only after the model is loaded. Cloud is read inside the slot:
+        // a reload queued behind a warm-up must not load after cloud went back on.
+        await warmupQueue.run { [self] in
+            guard !settings.cloudTranscriptionEnabled else { return }
+            let engine = activeTranscriptionEngine
+            // A loaded model would be built a second time by `loadModel`.
+            guard engine.modelState != .loaded else { return }
+            await engine.loadModel()
+        }
+    }
+
+    /// Cloud on releases the local models, once no local transcription is
+    /// running; cloud off reloads the active one as the launch preload does.
+    private func cloudSettingChanged(enabled: Bool) {
+        if enabled {
+            unloadPending = true
+            unloadLocalModelsWhenIdle()
+        } else {
+            unloadPending = false
+            Task { await preloadActiveModel() }
+        }
+    }
+
+    /// The signal is each engine's `transcriptionsInFlight`, counted around
+    /// `transcribeSegments`, which every pipeline job goes through, whichever
+    /// queue or target resolved the engine.
+    private func unloadLocalModelsWhenIdle() {
+        guard unloadPending else { return }
+        let engines = [localWhisperKit, localParakeet]
+        guard engines.allSatisfy({ $0.transcriptionsInFlight == 0 }) else {
+            guard !waitingForIdleEngines else { return }
+            waitingForIdleEngines = true
+            withObservationTracking {
+                for engine in engines {
+                    _ = engine.transcriptionsInFlight
+                }
+            } onChange: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.waitingForIdleEngines = false
+                    self.unloadLocalModelsWhenIdle()
+                }
+            }
+            return
+        }
+        unloadPending = false
+        for engine in engines {
+            engine.unloadModel()
+        }
     }
 
     /// Push current model / language / vocabulary settings into the active
@@ -131,6 +198,23 @@ final class EngineController {
             if parakeetEngine.customVocabularyBookmark != nextBookmark { parakeetEngine.customVocabularyBookmark = nextBookmark }
             let nextLang = settings.parakeetLanguageOrNil
             if parakeetEngine.language != nextLang { parakeetEngine.language = nextLang }
+        }
+    }
+
+    /// Acts only on a change of the cloud toggle; same re-arming pattern as below.
+    private func observeCloudSetting() {
+        withObservationTracking {
+            _ = settings.cloudTranscriptionEnabled
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                let enabled = self.settings.cloudTranscriptionEnabled
+                if enabled != self.cloudEnabled {
+                    self.cloudEnabled = enabled
+                    self.cloudSettingChanged(enabled: enabled)
+                }
+                self.observeCloudSetting()
+            }
         }
     }
 

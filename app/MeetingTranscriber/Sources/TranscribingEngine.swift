@@ -28,6 +28,14 @@ protocol TranscribingEngine: AnyObject {
 
     func loadModel() async
     func transcribeSegments(audioPath: URL) async throws -> [TimestampedSegment]
+
+    /// Release the loaded model; the next transcription loads it again. A load
+    /// in flight is discarded when it ends rather than installed.
+    func unloadModel()
+
+    /// How many `transcribeSegments` calls are running, so the model is not
+    /// released under a job (`EngineController`). Observable on local engines.
+    var transcriptionsInFlight: Int { get }
 }
 
 extension TranscribingEngine {
@@ -40,6 +48,13 @@ extension TranscribingEngine {
     /// Only an engine with a documented floor of its own overrides this.
     var minimumAudioFrames: Int {
         1
+    }
+
+    /// No model to release (the cloud engine, test doubles).
+    func unloadModel() {}
+
+    var transcriptionsInFlight: Int {
+        0
     }
 }
 

@@ -15,6 +15,7 @@ final class ParakeetEngine: TranscribingEngine, StreamingTranscribingEngine {
     private(set) var modelState: EngineModelState = .unloaded
     private(set) var downloadProgress: Double = 0
     private(set) var transcriptionProgress: Double = 0
+    private(set) var transcriptionsInFlight = 0
 
     /// FluidAudio refuses anything shorter with
     /// `Invalid audio data provided. Must be at least 300ms of 16kHz audio`.
@@ -56,7 +57,11 @@ final class ParakeetEngine: TranscribingEngine, StreamingTranscribingEngine {
     }
 
     private var asrManager: AsrManager?
-    private let modelLoad = SingleFlight<Void>()
+    /// Outcome: whether `unloadModel` discarded the load while it ran.
+    private let modelLoad = SingleFlight<Bool>()
+    /// Bumped by `unloadModel`. A load that started under an older value does
+    /// not install its manager.
+    private var unloadGeneration = 0
 
     // CTC vocabulary boosting state
     private struct VocabularyBooster {
@@ -91,14 +96,27 @@ final class ParakeetEngine: TranscribingEngine, StreamingTranscribingEngine {
     }
 
     func loadModel() async {
-        await modelLoad.run { [self] in await performLoad() }
+        _ = await modelLoad.run { [self] in await performLoad() }
     }
 
-    private func performLoad() async {
+    /// Release the ASR manager and the vocabulary booster (cloud transcription
+    /// switched on). A load in flight is discarded when it ends; the next
+    /// transcription loads again. A running decode keeps its own manager reference.
+    func unloadModel() {
+        unloadGeneration += 1
+        asrManager = nil
+        invalidateVocabularyConfiguration()
+        modelState = .unloaded
+        downloadProgress = 0
+    }
+
+    /// Returns whether an unload discarded this load.
+    private func performLoad() async -> Bool {
+        let generation = unloadGeneration
         #if DEBUG
             if let modelLoadOverride {
                 await modelLoadOverride()
-                return
+                return generation != unloadGeneration
             }
         #endif
         modelState = .downloading
@@ -113,6 +131,11 @@ final class ParakeetEngine: TranscribingEngine, StreamingTranscribingEngine {
             downloadProgress = 1.0
             let manager = AsrManager(config: .default)
             try await manager.loadModels(models)
+            guard generation == unloadGeneration else {
+                modelState = .unloaded
+                downloadProgress = 0
+                return true
+            }
             asrManager = manager
             modelState = .loaded
         } catch {
@@ -120,6 +143,7 @@ final class ParakeetEngine: TranscribingEngine, StreamingTranscribingEngine {
             modelState = .unloaded
             downloadProgress = 0
         }
+        return false
     }
 
     /// Ensure model is loaded, loading it if necessary. The load is started
@@ -131,7 +155,10 @@ final class ParakeetEngine: TranscribingEngine, StreamingTranscribingEngine {
             if fileTranscriptionOverride != nil, sampleTranscriptionOverride != nil { return }
         #endif
         logger.info("Parakeet: model not loaded, loading…")
-        try await modelLoad.runUnlessCancelled { [self] in await performLoad() }
+        // A load an unload discarded is loaded again: this caller needs the model.
+        while try await modelLoad.runUnlessCancelled({ [self] in await performLoad() }), asrManager == nil {
+            try Task.checkCancellation()
+        }
         guard asrManager != nil else {
             logger.error("Parakeet: model load FAILED, state=\(String(describing: self.modelState), privacy: .public)")
             throw TranscriptionError.modelNotLoaded()
@@ -140,6 +167,8 @@ final class ParakeetEngine: TranscribingEngine, StreamingTranscribingEngine {
     }
 
     func transcribeSegments(audioPath: URL) async throws -> [TimestampedSegment] {
+        transcriptionsInFlight += 1
+        defer { transcriptionsInFlight -= 1 }
         try await ensureModel()
         await ensureVocabularyConfiguration()
 

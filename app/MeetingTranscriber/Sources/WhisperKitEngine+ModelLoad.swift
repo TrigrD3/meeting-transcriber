@@ -52,6 +52,14 @@ extension WhisperKitEngine {
                 await modelLoad.run { [self] in await performLoad() }
             }
 
+            // An unload landed during the pass and discarded it. A preload stops
+            // there, which is the point of the unload; a transcription still needs
+            // the model, so it loads again.
+            if attempt.discardedByUnload, !pipeInstalled {
+                guard untilCancelled else { return }
+                continue
+            }
+
             // Nothing is loaded. Run again in two cases. Either the attempt built a
             // pipe that is now gone, which means the reconcile dropped it because the
             // variant moved on while it ran. Or it failed for a variant that is no
