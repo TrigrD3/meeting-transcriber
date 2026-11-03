@@ -60,7 +60,6 @@ struct TranscriptionSettingsView: View {
     var body: some View {
         Form {
             transcriptionSection
-            cloudTranscriptionSection
             vocabularySection
             liveTranscriptionSection
             legacyModelsSection
@@ -82,16 +81,13 @@ struct TranscriptionSettingsView: View {
     /// Each group of controls is a named property rather than inline in
     /// `body`: inline, this section made `body` the slowest body in the app
     /// to type-check, close enough to the 300 ms limit CI enforces that a
-    /// slow runner pushed it over. Each property stands for exactly one of the
-    /// section's former direct children, in the same order: view tests reach
-    /// some controls by their position in the section, so merging two of them
+    /// slow runner pushed it over. Keep each group its own property: view
+    /// tests reach some controls by their position, so merging two of them
     /// into one property would move every control after it.
     private var transcriptionSection: some View {
         Section("Transcription") {
-            enginePicker
-            whisperKitPickers
-            parakeetLanguagePicker
-            engineStatusView
+            TranscriptionMethodPicker(settings: settings, consent: cloudConsent)
+            transcriptionMethodRows
         }
         .accessibilityIdentifier(A11yID.transcriptionSection)
         .recordOnlyDisabled(settings.recordOnly)
@@ -100,12 +96,41 @@ struct TranscriptionSettingsView: View {
         .disabled(legacyModels?.isRemoving == true)
     }
 
-    private var cloudTranscriptionSection: some View {
-        Section("Cloud Transcription") {
-            CloudTranscriptionControls(settings: settings, consent: cloudConsent, connectionTest: cloudConnectionTest)
+    /// Only the selected method's rows, like the Meeting Notes provider picker.
+    @ViewBuilder private var transcriptionMethodRows: some View {
+        if settings.cloudTranscriptionEnabled {
+            CloudTranscriptionControls(
+                settings: settings,
+                connectionTest: cloudConnectionTest,
+                localFallback: Self.localFallbackDescription(for: settings),
+            )
+        } else {
+            localTranscriptionRows
         }
-        .accessibilityIdentifier(A11yID.cloudTranscriptionSection)
-        .recordOnlyDisabled(settings.recordOnly)
+    }
+
+    @ViewBuilder private var localTranscriptionRows: some View {
+        enginePicker
+        whisperKitPickers
+        parakeetLanguagePicker
+        engineStatusView
+    }
+
+    /// Names the local engine and model Run Locally falls back to, e.g.
+    /// "Run Locally uses WhisperKit · Large V3 Turbo".
+    static func localFallbackDescription(for settings: AppSettings) -> String {
+        switch settings.transcriptionEngine {
+        case .parakeet:
+            return "Run Locally uses Parakeet"
+
+        case .whisperKit:
+            let model = settings.whisperKitModelSelection
+            var name = model.variant
+            if model.origin == .stock, let stock = whisperKitModels.first(where: { $0.variant == model.variant }) {
+                name = stock.label.replacingOccurrences(of: " (recommended)", with: "")
+            }
+            return "Run Locally uses WhisperKit \u{00B7} \(name)"
+        }
     }
 
     private var enginePicker: some View {
@@ -324,7 +349,7 @@ struct TranscriptionSettingsView: View {
     private var captionsOffForCloud: Bool {
         settings.liveTranscriptionEnabled && settings.cloudTranscriptionEnabled
             && LiveCaptionsGate.offForCloud(
-                engineLanguage: settings.activeEngineLanguageOrNil,
+                engineLanguage: settings.liveCaptionsLanguageOrNil,
                 engineSupportsLive: settings.transcriptionEngine.supportsLiveTranscription,
             )
     }
@@ -333,7 +358,7 @@ struct TranscriptionSettingsView: View {
     /// the active language routes to Nemotron (set + non-English) and no model
     /// variant is on disk yet.
     private var needsCaptionModelConsent: Bool {
-        guard let language = settings.activeEngineLanguageOrNil, language != "en" else { return false }
+        guard let language = settings.liveCaptionsLanguageOrNil, language != "en" else { return false }
         return !nemotronModelDownloaded
     }
 
@@ -355,6 +380,10 @@ struct TranscriptionSettingsView: View {
         }
     }
 
+    static let cloudVocabularyHelpText = "Text file with one term per line. Cloud transcription sends the "
+        + "first terms that fit in 128 characters as the request's prompt, a hint rather than a guaranteed "
+        + "correction. Run Locally uses the file the way the local engine does."
+
     /// Whether any Nemotron multilingual model variant is already on disk.
     private var nemotronModelDownloaded: Bool {
         guard let base = FileManager.default.urls(
@@ -369,7 +398,7 @@ struct TranscriptionSettingsView: View {
     /// toggle): English → Parakeet EOU, any other set language → Nemotron
     /// multilingual streaming, auto-detect → the standard re-transcribe engine.
     private var captionBackendFootnote: String {
-        switch settings.activeEngineLanguageOrNil {
+        switch settings.liveCaptionsLanguageOrNil {
         case .none:
             "Caption backend follows your transcription language. Auto-detect uses the "
                 + "standard re-transcribe engine; set a specific language for low-latency "
@@ -457,8 +486,8 @@ struct TranscriptionSettingsView: View {
     }
 }
 
-/// The Vocabulary section. An extension so the view's main body stays under
-/// the type-length limit.
+/// The Vocabulary section, shared by both "Transcribe with" methods. An
+/// extension so the view's main body stays under the type-length limit.
 extension TranscriptionSettingsView {
     private var vocabularySection: some View {
         Section("Vocabulary") {
@@ -508,7 +537,11 @@ extension TranscriptionSettingsView {
                 }
             }
         }
-        .help(Self.vocabularyHelpText(for: settings.transcriptionEngine))
+        .help(
+            settings.cloudTranscriptionEnabled
+                ? Self.cloudVocabularyHelpText
+                : Self.vocabularyHelpText(for: settings.transcriptionEngine),
+        )
     }
 
     private var customVocabularyValidation: some View {

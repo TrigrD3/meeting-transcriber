@@ -382,6 +382,7 @@ final class LiveTranscriptionCoordinatorTests: XCTestCase {
         let settings = AppSettings(defaults: DefaultsSuite.open(suiteName)!)
         settings.transcriptionEngine = .parakeet
         settings.parakeetLanguage = ""
+        settings.cloudTranscriptionLanguage = ""
         settings.liveTranscriptionEnabled = true
         let (base, buildCount) = countingControllerFactory()
         let last = WeakControllerBox()
@@ -394,7 +395,7 @@ final class LiveTranscriptionCoordinatorTests: XCTestCase {
             captions: LiveCaptionsState(),
             liveEnabled: { settings.liveTranscriptionEnabled },
             engineSupportsLive: { settings.transcriptionEngine.supportsLiveTranscription },
-            engineLanguage: { settings.activeEngineLanguageOrNil },
+            engineLanguage: { settings.liveCaptionsLanguageOrNil },
             cloudTranscriptionEnabled: { settings.cloudTranscriptionEnabled },
             verboseDiagnostics: { false },
             makeController: factory,
@@ -459,6 +460,30 @@ final class LiveTranscriptionCoordinatorTests: XCTestCase {
         await settle()
         XCTAssertEqual(buildCount(), 1, "with cloud on the idle flush builds no controller")
         XCTAssertNil(lastController(), "the idle flush drops the re-transcribe controller")
+    }
+
+    /// With cloud on, captions route by the cloud language, and changing it
+    /// while idle rebuilds against the new one; the local language is ignored.
+    func testCloudLanguageChangeWhileCloudIsOnRebuildsWithTheCloudLanguage() async {
+        let suiteName = "LiveTxCoordTests-\(getpid())-\(UUID().uuidString)"
+        defer { DefaultsSuite.remove(suiteName) }
+        let (coordinator, settings, buildCount, lastController) = makeCloudToggleCoordinator(suiteName) { false }
+        await settle()
+        settings.cloudTranscriptionEnabled = true
+        await settle()
+        XCTAssertEqual(buildCount(), 1, "cloud on with auto-detect builds nothing")
+
+        settings.parakeetLanguage = "en"
+        await settle()
+        XCTAssertEqual(buildCount(), 1, "the local language does not drive captions while cloud is on")
+        XCTAssertNil(lastController())
+
+        settings.cloudTranscriptionLanguage = "en"
+        await settle()
+        XCTAssertEqual(buildCount(), 2, "a cloud-language change must rebuild")
+        let recorder = DualSourceRecorder()
+        await coordinator.attachSinks(to: recorder)
+        XCTAssertNotNil(recorder.micLiveSink, "English captions stream with cloud on")
     }
 }
 

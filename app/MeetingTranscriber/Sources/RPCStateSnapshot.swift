@@ -385,12 +385,14 @@
                 let cloudTranscriptionEnabled: Bool
                 let cloudTranscriptionBaseURL: String
                 let cloudTranscriptionModel: String
+                /// Empty string = auto-detect.
+                let cloudTranscriptionLanguage: String
 
                 static let empty = Self(
                     engine: "", whisperKitModel: "", whisperLanguage: "",
                     parakeetLanguage: "", customVocabularyEnabled: false, customVocabularyPath: "",
                     cloudTranscriptionEnabled: false, cloudTranscriptionBaseURL: "",
-                    cloudTranscriptionModel: "",
+                    cloudTranscriptionModel: "", cloudTranscriptionLanguage: "",
                 )
             }
 

@@ -263,7 +263,7 @@ final class AppState {
             captions: liveCaptions,
             liveEnabled: { [settings] in settings.liveTranscriptionEnabled },
             engineSupportsLive: { [settings] in settings.transcriptionEngine.supportsLiveTranscription },
-            engineLanguage: { [settings] in settings.activeEngineLanguageOrNil },
+            engineLanguage: { [settings] in settings.liveCaptionsLanguageOrNil },
             cloudTranscriptionEnabled: { [settings] in settings.cloudTranscriptionEnabled },
             verboseDiagnostics: { [settings] in settings.verboseDiagnostics },
             makeController: liveControllerFactory,
@@ -466,7 +466,7 @@ final class AppState {
     var shouldShowLiveCaptions: Bool {
         LiveCaptionsGate.overlayVisible(
             liveEnabled: settings.liveTranscriptionEnabled,
-            engineLanguage: settings.activeEngineLanguageOrNil,
+            engineLanguage: settings.liveCaptionsLanguageOrNil,
             engineSupportsLive: settings.transcriptionEngine.supportsLiveTranscription,
             cloudTranscriptionEnabled: settings.cloudTranscriptionEnabled,
             isRecording: watching.isRecording,
