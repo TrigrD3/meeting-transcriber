@@ -59,13 +59,15 @@ enum CloudTranscriptionError: LocalizedError, Equatable {
 }
 
 /// Transcribes through an OpenAI-compatible `/audio/transcriptions` endpoint.
-/// The whole 16 kHz WAV goes up in one request; diarization stays local.
+/// A recording up to `pieceDuration` goes up in one request; a longer one is
+/// cut into pieces (`CloudAudioSplitter`) sent one after another. Diarization
+/// stays local.
 @MainActor
 final class CloudTranscriptionEngine: TranscribingEngine {
     /// Nothing to download or load: the model runs at the provider.
     let modelState: EngineModelState = .loaded
     let downloadProgress: Double = 0
-    let transcriptionProgress: Double = 0
+    private(set) var transcriptionProgress: Double = 0
 
     private let configuration: @MainActor () -> CloudTranscriptionConfiguration
     private let session: URLSession
@@ -79,6 +81,10 @@ final class CloudTranscriptionEngine: TranscribingEngine {
     static let maxRetryAfter: Duration = .seconds(60)
     /// Injected so tests do not wait; throws on cancellation.
     private let sleep: @MainActor (Duration) async throws -> Void
+    /// Longest piece sent in one request; injectable so tests use seconds.
+    private let pieceDuration: TimeInterval
+    /// How far before a piece boundary a quiet cut point is searched for.
+    private let searchWindow: TimeInterval
 
     init(
         configuration: @escaping @MainActor () -> CloudTranscriptionConfiguration,
@@ -86,12 +92,16 @@ final class CloudTranscriptionEngine: TranscribingEngine {
         timeoutSeconds: TimeInterval = 600,
         retryDelays: [Duration] = [.seconds(2), .seconds(8)],
         sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        pieceDuration: TimeInterval = CloudAudioSplitter.defaultPieceDuration,
+        searchWindow: TimeInterval = CloudAudioSplitter.defaultSearchWindow,
     ) {
         self.configuration = configuration
         self.session = session
         self.timeoutSeconds = timeoutSeconds
         self.retryDelays = retryDelays
         self.sleep = sleep
+        self.pieceDuration = pieceDuration
+        self.searchWindow = searchWindow
     }
 
     func loadModel() async {} // swiftlint:disable:this async_without_await
@@ -104,6 +114,41 @@ final class CloudTranscriptionEngine: TranscribingEngine {
         }
         let url = base.appendingPathComponent("audio").appendingPathComponent("transcriptions")
 
+        transcriptionProgress = 0
+        // A file AVAudioFile cannot read goes up whole, so the provider's
+        // verdict (a 400, the track's own failure) decides as before.
+        guard let (pieces, sampleRate) = try? CloudAudioSplitter.planPieces(
+            of: audioPath, pieceDuration: pieceDuration, searchWindow: searchWindow,
+        ), pieces.count > 1 else {
+            let segments = try await transcribeFile(audioPath, url: url, config: config)
+            transcriptionProgress = 1
+            return segments
+        }
+
+        logger.info("cloud_transcription_split pieces=\(pieces.count)")
+        let stem = audioPath.deletingPathExtension().lastPathComponent
+        var result: [TimestampedSegment] = []
+        for (index, range) in pieces.enumerated() {
+            let pieceURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(stem)_part\(index + 1)_\(UUID().uuidString).wav")
+            defer { try? FileManager.default.removeItem(at: pieceURL) }
+            try CloudAudioSplitter.writePiece(of: audioPath, range: range, to: pieceURL)
+            let offset = Double(range.lowerBound) / sampleRate
+            for segment in try await transcribeFile(pieceURL, url: url, config: config) {
+                var shifted = segment
+                shifted.start += offset
+                shifted.end += offset
+                result.append(shifted)
+            }
+            transcriptionProgress = Double(index + 1) / Double(pieces.count)
+        }
+        return result
+    }
+
+    /// One file in one request, through the retry loop.
+    private func transcribeFile(
+        _ audioPath: URL, url: URL, config: CloudTranscriptionConfiguration,
+    ) async throws -> [TimestampedSegment] {
         let boundary = "Boundary-\(UUID().uuidString)"
         let bodyFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("cloud_transcription_\(UUID().uuidString).multipart")
