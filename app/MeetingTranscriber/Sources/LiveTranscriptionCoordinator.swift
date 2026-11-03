@@ -16,7 +16,8 @@ import Observation
 /// `beginPrewarm(engineProvider:isRecording:)` (called from `AppState.init` after
 /// stored-property init, where the `[weak self]` closures are valid) rather than captured at construction — so the coordinator
 /// never holds an AppState back-reference. `liveEnabled` / `engineSupportsLive` /
-/// `engineLanguage` / `verboseDiagnostics` are settings-backed closures.
+/// `engineLanguage` / `cloudTranscriptionEnabled` / `verboseDiagnostics` are
+/// settings-backed closures.
 ///
 /// Not `@Observable` — it exposes no observable state (it drives the controller
 /// + captions imperatively). It still uses `withObservationTracking` internally
@@ -50,6 +51,7 @@ final class LiveTranscriptionCoordinator {
     private let liveEnabled: () -> Bool
     private let engineSupportsLive: () -> Bool
     private let engineLanguage: () -> String?
+    private let cloudTranscriptionEnabled: () -> Bool
     private let verboseDiagnostics: () -> Bool
     private let makeController: ControllerFactory
 
@@ -64,11 +66,11 @@ final class LiveTranscriptionCoordinator {
     /// applies with a non-streaming active engine — those sessions don't need it.
     /// Injectable so tests can supply a controller with mock collaborators (no
     /// model load); the default builds the real one. Takes `captions` +
-    /// `engineLanguage` + `verboseDiagnostics` as parameters (rather than
+    /// `engineLanguage` + the cloud flag + `verboseDiagnostics` as parameters (rather than
     /// capturing `self`) so the default can be a `static` function with no
     /// init-ordering dependency.
     typealias ControllerFactory = @MainActor (
-        (any StreamingTranscribingEngine)?, LiveCaptionsState, String?, @escaping () -> Bool,
+        (any StreamingTranscribingEngine)?, LiveCaptionsState, String?, Bool, @escaping () -> Bool,
     ) -> LiveTranscriptionController
 
     init(
@@ -76,6 +78,7 @@ final class LiveTranscriptionCoordinator {
         liveEnabled: @escaping () -> Bool,
         engineSupportsLive: @escaping () -> Bool,
         engineLanguage: @escaping () -> String? = { nil },
+        cloudTranscriptionEnabled: @escaping () -> Bool = { false },
         verboseDiagnostics: @escaping () -> Bool,
         makeController: @escaping ControllerFactory = LiveTranscriptionCoordinator.makeDefaultController,
         warmupQueue: ModelWarmupQueue = ModelWarmupQueue(),
@@ -84,6 +87,7 @@ final class LiveTranscriptionCoordinator {
         self.liveEnabled = liveEnabled
         self.engineSupportsLive = engineSupportsLive
         self.engineLanguage = engineLanguage
+        self.cloudTranscriptionEnabled = cloudTranscriptionEnabled
         self.verboseDiagnostics = verboseDiagnostics
         self.makeController = makeController
         self.warmupQueue = warmupQueue
@@ -96,6 +100,7 @@ final class LiveTranscriptionCoordinator {
         engine: (any StreamingTranscribingEngine)?,
         captions: LiveCaptionsState,
         engineLanguage: String?,
+        cloudTranscriptionEnabled: Bool,
         verboseDiagnostics: @escaping () -> Bool,
     ) -> LiveTranscriptionController {
         // `verboseDiagnostics` passed labeled (not trailing): with two
@@ -107,6 +112,7 @@ final class LiveTranscriptionCoordinator {
             vad: FluidVAD(threshold: 0.5),
             captions: captions,
             engineLanguage: engineLanguage,
+            cloudTranscriptionEnabled: cloudTranscriptionEnabled,
             verboseDiagnostics: verbose,
         )
     }
@@ -119,6 +125,7 @@ final class LiveTranscriptionCoordinator {
             liveEnabled: liveEnabled(),
             engineLanguage: engineLanguage(),
             engineSupportsLive: engineSupportsLive(),
+            cloudTranscriptionEnabled: cloudTranscriptionEnabled(),
         )
     }
 
@@ -199,17 +206,20 @@ final class LiveTranscriptionCoordinator {
         withObservationTracking {
             // Touch the underlying settings via the gate closures so the change
             // tracker observes `liveTranscriptionEnabled` + `transcriptionEngine`
-            // + the active engine's language.
+            // + the active engine's language + `cloudTranscriptionEnabled`.
             _ = liveEnabled()
             _ = engineSupportsLive()
             _ = engineLanguage()
+            _ = cloudTranscriptionEnabled()
         } onChange: { [weak self] in
             Task { @MainActor in self?.handleSettingsChange() }
         }
     }
 
-    /// React to a toggle / engine / language change. While idle, drop the cached
-    /// controller and rebuild against the new settings immediately. While a
+    /// React to a toggle / engine / language / cloud change. While idle, drop the
+    /// cached controller and rebuild against the new settings immediately
+    /// (cloud switched on drops a re-transcribe controller and builds none, so
+    /// nothing reloads the local model `EngineController` unloads). While a
     /// recording is in progress, DEFER: keep the current meeting's warm
     /// controller (so no CoreML recompile lands mid-recording and the overlay
     /// stays live on the current engine), re-arm the observer, and apply the
@@ -245,15 +255,17 @@ final class LiveTranscriptionCoordinator {
         guard let engine = engineProvider?() else { return nil }
         let streamingEngine = engine as? any StreamingTranscribingEngine
         let language = engineLanguage()
+        let cloud = cloudTranscriptionEnabled()
         let strategy = LiveCaptionsGate.strategy(
             liveEnabled: liveEnabled(),
             engineLanguage: language,
             engineSupportsLive: engineSupportsLive(),
+            cloudTranscriptionEnabled: cloud,
         )
         guard strategy != .none else { return nil }
         // Re-transcribe needs a streaming engine; the streaming backends don't.
         guard strategy != .reTranscribe || streamingEngine != nil else { return nil }
-        let controller = makeController(streamingEngine, captions, language, verboseDiagnostics)
+        let controller = makeController(streamingEngine, captions, language, cloud, verboseDiagnostics)
         self.controller = controller
         // Route `prepare()` through the shared warm-up queue (see `warmupQueue`).
         // Bind it locally so the fire-and-forget Task doesn't capture `self`.

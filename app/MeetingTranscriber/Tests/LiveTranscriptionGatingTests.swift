@@ -126,13 +126,14 @@ final class LiveTranscriptionGatingTests: XCTestCase {
 /// so `prepare()` resolves to no captions without touching CoreML.
 private func inertLiveControllerFactory() -> LiveTranscriptionCoordinator.ControllerFactory {
     struct NoNemotronInTests: Error {}
-    return { _, captions, engineLanguage, verboseDiagnostics in
+    return { _, captions, engineLanguage, cloudTranscriptionEnabled, verboseDiagnostics in
         LiveTranscriptionController(
             engine: nil,
             vad: FluidVAD(threshold: 0.5),
             captions: captions,
             speakerMatcher: FakeLiveSpeakerMatcher(),
             engineLanguage: engineLanguage,
+            cloudTranscriptionEnabled: cloudTranscriptionEnabled,
             eouSessionFactory: { MockEouManager() },
             nemotronPipelineFactory: { _, _, _ in throw NoNemotronInTests() },
             verboseDiagnostics: verboseDiagnostics,

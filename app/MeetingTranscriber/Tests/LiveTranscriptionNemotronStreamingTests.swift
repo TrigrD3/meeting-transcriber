@@ -67,6 +67,7 @@ final class LiveTranscriptionNemotronStreamingTests: XCTestCase {
         probe: NemotronFactoryProbe,
         engine: LoadTrackingEngine,
         captions: LiveCaptionsState = LiveCaptionsState(),
+        cloudTranscriptionEnabled: Bool = false,
     ) -> LiveTranscriptionController {
         LiveTranscriptionController(
             engine: engine,
@@ -74,6 +75,7 @@ final class LiveTranscriptionNemotronStreamingTests: XCTestCase {
             captions: captions,
             speakerMatcher: FakeLiveSpeakerMatcher(),
             engineLanguage: "de",
+            cloudTranscriptionEnabled: cloudTranscriptionEnabled,
             nemotronPipelineFactory: probe.factory(),
         )
     }
@@ -111,6 +113,24 @@ final class LiveTranscriptionNemotronStreamingTests: XCTestCase {
             captions.activeBackend, "Re-transcribe · DE",
             "a silent fallback must publish the ACTUAL backend, not the selected Nemotron",
         )
+    }
+
+    /// With cloud transcription on, a failed Nemotron load leaves captions off
+    /// rather than falling back to the local engine.
+    func testNemotronLoadFailureWithCloudOnLeavesCaptionsOffWithoutLoadingEngine() async {
+        let probe = NemotronFactoryProbe(loadError: LoadFailure())
+        let engine = LoadTrackingEngine()
+        let captions = LiveCaptionsState()
+        let controller = makeController(
+            probe: probe, engine: engine, captions: captions, cloudTranscriptionEnabled: true,
+        )
+
+        await controller.prepare()
+        await controller.prepareForNextRecording()
+
+        XCTAssertGreaterThan(probe.buildCount, 0, "the Nemotron path must have been attempted")
+        XCTAssertEqual(engine.loadModelCount, 0, "cloud on: no re-transcribe fallback on the local engine")
+        XCTAssertNil(captions.activeBackend, "no backend is published when captions stay off")
     }
 
     func testPrepareThenResetKeepsNemotronSessions() async {

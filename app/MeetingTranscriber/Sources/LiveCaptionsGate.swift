@@ -18,6 +18,10 @@
 /// other language deliberately does NOT route to a streaming model — the spoken
 /// language isn't statically known, and a wrong-language model is worse than the
 /// engine-driven `.reTranscribe` fallback.
+///
+/// **Cloud transcription keeps captions off the local engine.** With it on,
+/// `.reTranscribe` becomes `.none`: that path loads the local model, which
+/// `EngineController` frees while cloud is on. The streaming backends stay.
 enum LiveCaptionsGate {
     /// Which per-channel pipeline strategy to build, or none.
     enum Strategy: Equatable {
@@ -47,14 +51,34 @@ enum LiveCaptionsGate {
     ///     (ISO 639-1, e.g. `de`/`en`), or `nil` for auto-detect.
     ///   - engineSupportsLive: whether the active engine implements the
     ///     in-memory `transcribeSamples` re-transcribe hook.
+    ///   - cloudTranscriptionEnabled: cloud transcription is on, so the local
+    ///     engine must not be used (no `.reTranscribe`).
     static func strategy(
         liveEnabled: Bool,
         engineLanguage: String?,
         engineSupportsLive: Bool,
+        cloudTranscriptionEnabled: Bool,
     ) -> Strategy {
         guard liveEnabled else { return .none }
-        guard let engineLanguage else { return engineSupportsLive ? .reTranscribe : .none }
+        guard let engineLanguage else {
+            return engineSupportsLive && !cloudTranscriptionEnabled ? .reTranscribe : .none
+        }
         return engineLanguage == "en" ? .englishStreaming : .nemotronStreaming
+    }
+
+    /// Whether cloud transcription is what turns captions off for this
+    /// language: they would run with cloud off and do not with it on. Drives
+    /// the Settings note under the live-transcription toggle.
+    static func offForCloud(engineLanguage: String?, engineSupportsLive: Bool) -> Bool {
+        let local = strategy(
+            liveEnabled: true, engineLanguage: engineLanguage,
+            engineSupportsLive: engineSupportsLive, cloudTranscriptionEnabled: false,
+        )
+        let cloud = strategy(
+            liveEnabled: true, engineLanguage: engineLanguage,
+            engineSupportsLive: engineSupportsLive, cloudTranscriptionEnabled: true,
+        )
+        return local != .none && cloud == .none
     }
 
     /// Whether live captions are available at all (any non-`none` strategy).
@@ -64,11 +88,13 @@ enum LiveCaptionsGate {
         liveEnabled: Bool,
         engineLanguage: String?,
         engineSupportsLive: Bool,
+        cloudTranscriptionEnabled: Bool,
     ) -> Bool {
         strategy(
             liveEnabled: liveEnabled,
             engineLanguage: engineLanguage,
             engineSupportsLive: engineSupportsLive,
+            cloudTranscriptionEnabled: cloudTranscriptionEnabled,
         ) != .none
     }
 
@@ -76,10 +102,11 @@ enum LiveCaptionsGate {
     /// `captionsAvailable` (pipeline gate unchanged), then ANDs recording and
     /// the overlay toggle. `overlayEnabled` is UI-only: it never feeds
     /// `strategy` / coordinator arming.
-    static func overlayVisible(
+    static func overlayVisible( // swiftlint:disable:this function_parameter_count
         liveEnabled: Bool,
         engineLanguage: String?,
         engineSupportsLive: Bool,
+        cloudTranscriptionEnabled: Bool,
         isRecording: Bool,
         overlayEnabled: Bool,
     ) -> Bool {
@@ -87,6 +114,7 @@ enum LiveCaptionsGate {
             liveEnabled: liveEnabled,
             engineLanguage: engineLanguage,
             engineSupportsLive: engineSupportsLive,
+            cloudTranscriptionEnabled: cloudTranscriptionEnabled,
         ) && isRecording && overlayEnabled
     }
 }
