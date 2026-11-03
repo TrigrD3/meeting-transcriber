@@ -58,6 +58,7 @@ final class LiveTranscriptionController {
     /// → EOU, else → re-transcribe). On a streaming-model load failure
     /// `prepare()` degrades to re-transcribe (if supported) or to no captions.
     private let engineLanguage: String?
+    private let cloudTranscriptionEnabled: Bool
 
     /// Resolved per-channel strategy (`liveEnabled` is implicit — the controller
     /// only exists when captions are eligible).
@@ -66,7 +67,13 @@ final class LiveTranscriptionController {
             liveEnabled: true,
             engineLanguage: engineLanguage,
             engineSupportsLive: engine != nil,
+            cloudTranscriptionEnabled: cloudTranscriptionEnabled,
         )
+    }
+
+    /// Re-transcribe engine; nil while cloud is on, so captions never load the local model.
+    private var reTranscribeEngine: (any StreamingTranscribingEngine)? {
+        cloudTranscriptionEnabled ? nil : engine
     }
 
     /// True for the engine-independent streaming sessions (German/English), kept
@@ -140,6 +147,7 @@ final class LiveTranscriptionController {
         captions: LiveCaptionsState,
         speakerMatcher: any LiveSpeakerMatching = LiveSpeakerMatcher(),
         engineLanguage: String? = nil,
+        cloudTranscriptionEnabled: Bool = false,
         eouSessionFactory: @escaping EouSessionFactory = LiveTranscriptionController.makeDefaultEouManager,
         nemotronPipelineFactory: @escaping NemotronPipelineFactory = { language, vad, makeSink in
             try await LiveTranscriptionController.makeDefaultNemotronPipelines(
@@ -153,6 +161,7 @@ final class LiveTranscriptionController {
         self.captions = captions
         self.speakerMatcher = speakerMatcher
         self.engineLanguage = engineLanguage
+        self.cloudTranscriptionEnabled = cloudTranscriptionEnabled
         self.eouSessionFactory = eouSessionFactory
         self.nemotronPipelineFactory = nemotronPipelineFactory
         self.verboseDiagnostics = verboseDiagnostics
@@ -175,7 +184,7 @@ final class LiveTranscriptionController {
     /// When a streaming language is configured, builds the low-latency streaming
     /// sessions (Nemotron or EOU); if their model load throws (e.g. first-use
     /// download offline) it logs and degrades to the re-transcribe path when the
-    /// active engine supports it, or to no captions when it doesn't. A failed
+    /// active engine supports it and cloud is off, or to no captions. A failed
     /// streaming load is **not** retried until the controller is rebuilt (a
     /// settings change or relaunch drops + re-creates it) — deliberate, so a
     /// failing first-use model download isn't re-hammered on every recording.
@@ -220,9 +229,9 @@ final class LiveTranscriptionController {
         case .reTranscribe, .none:
             break
         }
-        // Re-transcribe path (default or streaming fallback). With no streaming
-        // engine (failed streaming backend on a non-streaming engine) captions stay off.
-        guard let engine else { return }
+        // Re-transcribe path (default or streaming fallback). Without a streaming
+        // engine, or with cloud transcription on, captions stay off.
+        guard let engine = reTranscribeEngine else { return }
         await engine.loadModel()
         micPipeline = makeReTranscribePipeline(channel: .mic, engine: engine)
         appPipeline = makeReTranscribePipeline(channel: .app, engine: engine)
@@ -352,7 +361,7 @@ final class LiveTranscriptionController {
         } else if isStreamingStrategy, !strategyResolved {
             // A streaming backend was selected but prepare() hasn't resolved yet
             // → defer to prepare(), which arms the feeds once it built the pipelines.
-        } else if let engine {
+        } else if let engine = reTranscribeEngine {
             micPipeline = makeReTranscribePipeline(channel: .mic, engine: engine)
             appPipeline = makeReTranscribePipeline(channel: .app, engine: engine)
         }

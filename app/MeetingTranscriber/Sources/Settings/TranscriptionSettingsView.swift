@@ -333,6 +333,8 @@ struct TranscriptionSettingsView: View {
                 )
             }
 
+            captionsOffForCloudNote
+
             captionOverlayToggle
             captionSizePicker
 
@@ -373,6 +375,26 @@ struct TranscriptionSettingsView: View {
         .pickerStyle(.segmented)
         .disabled(!settings.liveTranscriptionEnabled || !settings.liveCaptionsOverlayEnabled)
         .accessibilityIdentifier(A11yID.liveCaptionsSizePicker)
+    }
+
+    @ViewBuilder private var captionsOffForCloudNote: some View {
+        if captionsOffForCloud {
+            Text("Live captions are off for this language while cloud transcription is on.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(A11yID.liveCaptionsCloudOffNote)
+        }
+    }
+
+    /// Live captions are on, but cloud transcription keeps them off for the
+    /// current language (they would need the local engine).
+    private var captionsOffForCloud: Bool {
+        settings.liveTranscriptionEnabled && settings.cloudTranscriptionEnabled
+            && LiveCaptionsGate.offForCloud(
+                engineLanguage: settings.activeEngineLanguageOrNil,
+                engineSupportsLive: settings.transcriptionEngine.supportsLiveTranscription,
+            )
     }
 
     /// True when enabling captions would trigger the first-use Nemotron download:

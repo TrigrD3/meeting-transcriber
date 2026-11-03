@@ -107,6 +107,29 @@ final class LiveTranscriptionEnglishStreamingTests: XCTestCase {
         )
     }
 
+    func testEouLoadFailureWithCloudOnDoesNotFallBackToLocalEngine() async {
+        let probe = EouFactoryProbe(loadError: LoadFailure())
+        let engine = LoadTrackingEngine()
+        let captions = LiveCaptionsState()
+        let eouFactory: LiveTranscriptionController.EouSessionFactory = { probe.make() }
+        let controller = LiveTranscriptionController(
+            engine: engine,
+            vad: FluidVAD(threshold: 0.5),
+            captions: captions,
+            speakerMatcher: FakeLiveSpeakerMatcher(),
+            engineLanguage: "en",
+            cloudTranscriptionEnabled: true,
+            eouSessionFactory: eouFactory,
+        )
+
+        await controller.prepare()
+        await controller.prepareForNextRecording()
+
+        XCTAssertGreaterThan(probe.buildCount, 0, "the EOU path must have been attempted")
+        XCTAssertEqual(engine.loadModelCount, 0, "cloud on: no re-transcribe fallback on the local engine")
+        XCTAssertNil(captions.activeBackend, "no backend is published when captions stay off")
+    }
+
     // MARK: - 3. prepare()-failure with a non-streaming engine → no captions
 
     func testEouLoadFailureWithNoStreamingEngineYieldsNoCaptions() async {
