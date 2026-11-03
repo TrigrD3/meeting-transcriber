@@ -64,6 +64,7 @@
                 cloudTranscriptionEnabled: cloudTranscriptionEnabled,
                 cloudTranscriptionBaseURL: cloudTranscriptionBaseURL,
                 cloudTranscriptionModel: cloudTranscriptionModel,
+                cloudTranscriptionLanguage: cloudTranscriptionLanguage,
             )
         }
 

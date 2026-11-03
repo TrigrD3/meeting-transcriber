@@ -8,8 +8,8 @@ import SwiftUI
 final class CloudTranscriptionConsent {
     var isAsking = false
 
-    /// The toggle's write: switching on asks first until the user has
-    /// confirmed once; switching off never asks.
+    /// The "Transcribe with" write: picking Cloud asks first until the user has
+    /// confirmed once; On this Mac never asks.
     func request(_ enabled: Bool, in settings: AppSettings) {
         if enabled, !settings.cloudTranscriptionConsented {
             isAsking = true
@@ -55,46 +55,83 @@ final class CloudConnectionTest {
     }
 }
 
-/// "Transcribe in the cloud" and its endpoint fields, above the local engine
-/// picker, which stays selected for when cloud is off.
-struct CloudTranscriptionControls: View {
+/// The two choices of "Transcribe with". UI only: the stored settings stay
+/// `cloudTranscriptionEnabled` plus the local engine, which stays selected for
+/// Run Locally and for when cloud is off.
+enum TranscriptionMethod: CaseIterable {
+    case onThisMac
+    case cloud
+
+    var label: String {
+        switch self {
+        case .onThisMac: "On this Mac"
+        case .cloud: "Cloud"
+        }
+    }
+}
+
+/// "Transcribe with": picking Cloud asks for consent first until the user has
+/// confirmed once; Cancel leaves it on On this Mac.
+struct TranscriptionMethodPicker: View {
     @Bindable var settings: AppSettings
     @Bindable var consent: CloudTranscriptionConsent
-    var connectionTest: CloudConnectionTest
 
     var body: some View {
-        Toggle("Transcribe in the cloud", isOn: Binding(
-            get: { settings.cloudTranscriptionEnabled },
-            set: { consent.request($0, in: settings) },
-        ))
-        .accessibilityIdentifier(A11yID.cloudTranscriptionToggle)
+        Picker("Transcribe with", selection: Binding(
+            get: { settings.cloudTranscriptionEnabled ? TranscriptionMethod.cloud : .onThisMac },
+            set: { consent.request($0 == .cloud, in: settings) },
+        )) {
+            ForEach(TranscriptionMethod.allCases, id: \.self) { method in
+                Text(method.label).tag(method)
+            }
+        }
+        .accessibilityIdentifier(A11yID.transcriptionMethodPicker)
         .alert("Send meeting audio to the cloud?", isPresented: $consent.isAsking) {
             Button("Cancel", role: .cancel) { consent.cancel() }
             Button("Send to Cloud") { consent.confirm(in: settings) }
         } message: {
             Text(
                 "Recordings queued while this is on are uploaded to "
-                    + "\(Self.host(of: settings.cloudTranscriptionBaseURL)) for transcription. "
+                    + "\(CloudTranscriptionControls.host(of: settings.cloudTranscriptionBaseURL)) for transcription. "
                     + "Speaker identification stays on this Mac.",
             )
         }
+    }
+}
 
-        if settings.cloudTranscriptionEnabled {
-            Text("Meeting audio is sent to \(Self.host(of: settings.cloudTranscriptionBaseURL)).")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier(A11yID.cloudTranscriptionHostNote)
-            TextField("Base URL", text: $settings.cloudTranscriptionBaseURL, prompt: Text("https://api.openai.com/v1"))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier(A11yID.cloudTranscriptionBaseURLField)
-            TextField("Model", text: $settings.cloudTranscriptionModel, prompt: Text("whisper-1"))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier(A11yID.cloudTranscriptionModelField)
-            SecureField("API key", text: $settings.cloudTranscriptionAPIKey)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier(A11yID.cloudTranscriptionAPIKeyField)
-            connectionTestRow
+/// The rows "Transcribe with: Cloud" shows: endpoint fields, the cloud
+/// language and the local model Run Locally falls back to.
+struct CloudTranscriptionControls: View {
+    @Bindable var settings: AppSettings
+    var connectionTest: CloudConnectionTest
+    /// e.g. "Run Locally uses WhisperKit · Large V3 Turbo".
+    var localFallback: String
+
+    var body: some View {
+        Text("Meeting audio is sent to \(Self.host(of: settings.cloudTranscriptionBaseURL)).")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier(A11yID.cloudTranscriptionHostNote)
+        TextField("Base URL", text: $settings.cloudTranscriptionBaseURL, prompt: Text("https://api.openai.com/v1"))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(A11yID.cloudTranscriptionBaseURLField)
+        TextField("Model", text: $settings.cloudTranscriptionModel, prompt: Text("whisper-1"))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(A11yID.cloudTranscriptionModelField)
+        SecureField("API key", text: $settings.cloudTranscriptionAPIKey)
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(A11yID.cloudTranscriptionAPIKeyField)
+        connectionTestRow
+        Picker("Language", selection: $settings.cloudTranscriptionLanguage) {
+            ForEach(PickerLanguages.whisperKit, id: \.code) { lang in
+                Text(lang.label).tag(lang.code)
+            }
         }
+        .accessibilityIdentifier(A11yID.cloudTranscriptionLanguagePicker)
+        Text(localFallback)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier(A11yID.cloudTranscriptionLocalFallbackNote)
     }
 
     private var connectionTestRow: some View {

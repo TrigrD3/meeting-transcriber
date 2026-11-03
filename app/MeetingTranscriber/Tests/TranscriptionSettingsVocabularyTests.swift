@@ -62,8 +62,8 @@ final class TranscriptionSettingsVocabularyTests: XCTestCase {
         let vocabularyControl = try makeView(settings: settings)
             .inspect()
             .form()
-            .section(0)
-            .hStack(3)
+            .section(1)
+            .hStack(0)
 
         XCTAssertEqual(
             try vocabularyControl.help().string(),

@@ -60,7 +60,7 @@ struct TranscriptionSettingsView: View {
     var body: some View {
         Form {
             transcriptionSection
-            cloudTranscriptionSection
+            vocabularySection
             liveTranscriptionSection
             legacyModelsSection
         }
@@ -81,20 +81,13 @@ struct TranscriptionSettingsView: View {
     /// Each group of controls is a named property rather than inline in
     /// `body`: inline, this section made `body` the slowest body in the app
     /// to type-check, close enough to the 300 ms limit CI enforces that a
-    /// slow runner pushed it over. Each property stands for exactly one of the
-    /// section's former direct children, in the same order: view tests reach
-    /// some controls by their position in the section, so merging two of them
+    /// slow runner pushed it over. Keep each group its own property: view
+    /// tests reach some controls by their position, so merging two of them
     /// into one property would move every control after it.
     private var transcriptionSection: some View {
         Section("Transcription") {
-            enginePicker
-            whisperKitPickers
-            parakeetLanguagePicker
-            customVocabularyRow
-            customVocabularyValidation
-            whisperKitVocabularyPromptControls
-            terminologyRulesEditor
-            engineStatusView
+            TranscriptionMethodPicker(settings: settings, consent: cloudConsent)
+            transcriptionMethodRows
         }
         .accessibilityIdentifier(A11yID.transcriptionSection)
         .recordOnlyDisabled(settings.recordOnly)
@@ -103,12 +96,42 @@ struct TranscriptionSettingsView: View {
         .disabled(legacyModels?.isRemoving == true)
     }
 
-    private var cloudTranscriptionSection: some View {
-        Section("Cloud Transcription") {
-            CloudTranscriptionControls(settings: settings, consent: cloudConsent, connectionTest: cloudConnectionTest)
+    /// Only the selected method's rows, like the Meeting Notes provider picker.
+    @ViewBuilder private var transcriptionMethodRows: some View {
+        if settings.cloudTranscriptionEnabled {
+            CloudTranscriptionControls(
+                settings: settings,
+                connectionTest: cloudConnectionTest,
+                localFallback: Self.localFallbackDescription(for: settings),
+            )
+        } else {
+            localTranscriptionRows
         }
-        .accessibilityIdentifier(A11yID.cloudTranscriptionSection)
-        .recordOnlyDisabled(settings.recordOnly)
+    }
+
+    @ViewBuilder private var localTranscriptionRows: some View {
+        enginePicker
+        whisperKitPickers
+        parakeetLanguagePicker
+        whisperKitVocabularyPromptControls
+        engineStatusView
+    }
+
+    /// Names the local engine and model Run Locally falls back to, e.g.
+    /// "Run Locally uses WhisperKit · Large V3 Turbo".
+    static func localFallbackDescription(for settings: AppSettings) -> String {
+        switch settings.transcriptionEngine {
+        case .parakeet:
+            return "Run Locally uses Parakeet"
+
+        case .whisperKit:
+            let model = settings.whisperKitModelSelection
+            var name = model.variant
+            if model.origin == .stock, let stock = whisperKitModels.first(where: { $0.variant == model.variant }) {
+                name = stock.label.replacingOccurrences(of: " (recommended)", with: "")
+            }
+            return "Run Locally uses WhisperKit \u{00B7} \(name)"
+        }
     }
 
     private var enginePicker: some View {
@@ -160,36 +183,6 @@ struct TranscriptionSettingsView: View {
         }
     }
 
-    private var customVocabularyRow: some View {
-        HStack {
-            TextField("Custom vocabulary file", text: Binding(
-                get: { settings.customVocabularyPath },
-                set: { settings.setCustomVocabularyPath($0) },
-            ))
-            .textFieldStyle(.roundedBorder)
-            .accessibilityIdentifier(A11yID.customVocabularyPathField)
-            Button("Choose\u{2026}") {
-                let panel = NSOpenPanel()
-                panel.allowedContentTypes = [.plainText]
-                panel.allowsMultipleSelection = false
-                if panel.runModal() == .OK, let url = panel.url {
-                    settings.setCustomVocabularyFile(url)
-                }
-            }
-        }
-        .help(Self.vocabularyHelpText(for: settings.transcriptionEngine))
-    }
-
-    private var customVocabularyValidation: some View {
-        Text(settings.customVocabularyValidation.message)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .onAppear { settings.refreshCustomVocabularyValidation() }
-            .onChange(of: settings.customVocabularyPath) { _, _ in
-                settings.refreshCustomVocabularyValidation()
-            }
-    }
-
     @ViewBuilder
     private var whisperKitVocabularyPromptControls: some View { // swiftlint:disable:this attributes
         if settings.transcriptionEngine == .whisperKit {
@@ -200,26 +193,6 @@ struct TranscriptionSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("When enabled, WhisperKit uses a 32-token hint; earlier terms have priority.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var terminologyRulesEditor: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Canonical terminology")
-            TextEditor(text: $settings.terminologyRulesText)
-                .font(.body.monospaced())
-                .frame(minHeight: 72)
-                .accessibilityIdentifier(A11yID.terminologyRulesEditor)
-            Text(
-                "Applied to saved transcripts after ASR. One rule per line: "
-                    + "Canonical spelling => spoken variant | another variant. "
-                    + "Rules only replace whole words or phrases.",
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            Text(settings.terminologyRulesValidation.message)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -392,7 +365,7 @@ struct TranscriptionSettingsView: View {
     private var captionsOffForCloud: Bool {
         settings.liveTranscriptionEnabled && settings.cloudTranscriptionEnabled
             && LiveCaptionsGate.offForCloud(
-                engineLanguage: settings.activeEngineLanguageOrNil,
+                engineLanguage: settings.liveCaptionsLanguageOrNil,
                 engineSupportsLive: settings.transcriptionEngine.supportsLiveTranscription,
             )
     }
@@ -401,25 +374,8 @@ struct TranscriptionSettingsView: View {
     /// the active language routes to Nemotron (set + non-English) and no model
     /// variant is on disk yet.
     private var needsCaptionModelConsent: Bool {
-        guard let language = settings.activeEngineLanguageOrNil, language != "en" else { return false }
+        guard let language = settings.liveCaptionsLanguageOrNil, language != "en" else { return false }
         return !nemotronModelDownloaded
-    }
-
-    /// Engine-specific terminology behaviour is deliberately explained next to
-    /// the shared file picker: the two engines consume the same file but provide
-    /// different levels of influence over recognition.
-    static func vocabularyHelpText(for engine: TranscriptionEngineSetting) -> String {
-        switch engine {
-        case .parakeet:
-            "Text file with one term per line. Parakeet uses CTC rescoring for saved transcription. "
-                + "Live captions do not use CTC vocabulary rescoring."
-
-        case .whisperKit:
-            "Text file with one term per line. Enable the experimental custom vocabulary prompt to pass a "
-                + "soft 32-token decoder hint to WhisperKit; it is not a guaranteed correction. "
-                + "It applies to live captions only when they use "
-                + "WhisperKit; language-specific live backends do not use it."
-        }
     }
 
     static let whisperKitVocabularyPromptHelpText = "Experimental. WhisperKit treats the vocabulary as a decoder hint, "
@@ -441,7 +397,7 @@ struct TranscriptionSettingsView: View {
     /// toggle): English → Parakeet EOU, any other set language → Nemotron
     /// multilingual streaming, auto-detect → the standard re-transcribe engine.
     private var captionBackendFootnote: String {
-        switch settings.activeEngineLanguageOrNil {
+        switch settings.liveCaptionsLanguageOrNil {
         case .none:
             "Caption backend follows your transcription language. Auto-detect uses the "
                 + "standard re-transcribe engine; set a specific language for low-latency "
@@ -527,4 +483,94 @@ struct TranscriptionSettingsView: View {
                 .foregroundStyle(.red)
         }
     }
+}
+
+/// The Vocabulary section, shared by both "Transcribe with" methods. An
+/// extension so the view's main body stays under the type-length limit.
+extension TranscriptionSettingsView {
+    /// Shared by both methods, so it sits below "Transcribe with".
+    private var vocabularySection: some View {
+        Section("Vocabulary") {
+            customVocabularyRow
+            customVocabularyValidation
+            terminologyRulesEditor
+        }
+        .accessibilityIdentifier(A11yID.vocabularySection)
+        .recordOnlyDisabled(settings.recordOnly)
+    }
+
+    private var customVocabularyRow: some View {
+        HStack {
+            TextField("Custom vocabulary file", text: Binding(
+                get: { settings.customVocabularyPath },
+                set: { settings.setCustomVocabularyPath($0) },
+            ))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(A11yID.customVocabularyPathField)
+            Button("Choose\u{2026}") {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = [.plainText]
+                panel.allowsMultipleSelection = false
+                if panel.runModal() == .OK, let url = panel.url {
+                    settings.setCustomVocabularyFile(url)
+                }
+            }
+        }
+        .help(
+            settings.cloudTranscriptionEnabled
+                ? Self.cloudVocabularyHelpText
+                : Self.vocabularyHelpText(for: settings.transcriptionEngine),
+        )
+    }
+
+    private var customVocabularyValidation: some View {
+        Text(settings.customVocabularyValidation.message)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .onAppear { settings.refreshCustomVocabularyValidation() }
+            .onChange(of: settings.customVocabularyPath) { _, _ in
+                settings.refreshCustomVocabularyValidation()
+            }
+    }
+
+    private var terminologyRulesEditor: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Canonical terminology")
+            TextEditor(text: $settings.terminologyRulesText)
+                .font(.body.monospaced())
+                .frame(minHeight: 72)
+                .accessibilityIdentifier(A11yID.terminologyRulesEditor)
+            Text(
+                "Applied to saved transcripts after ASR. One rule per line: "
+                    + "Canonical spelling => spoken variant | another variant. "
+                    + "Rules only replace whole words or phrases.",
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            Text(settings.terminologyRulesValidation.message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Engine-specific terminology behaviour is deliberately explained next to
+    /// the shared file picker: the two engines consume the same file but provide
+    /// different levels of influence over recognition.
+    static func vocabularyHelpText(for engine: TranscriptionEngineSetting) -> String {
+        switch engine {
+        case .parakeet:
+            "Text file with one term per line. Parakeet uses CTC rescoring for saved transcription. "
+                + "Live captions do not use CTC vocabulary rescoring."
+
+        case .whisperKit:
+            "Text file with one term per line. Enable the experimental custom vocabulary prompt to pass a "
+                + "soft 32-token decoder hint to WhisperKit; it is not a guaranteed correction. "
+                + "It applies to live captions only when they use "
+                + "WhisperKit; language-specific live backends do not use it."
+        }
+    }
+
+    static let cloudVocabularyHelpText = "Text file with one term per line. Cloud transcription sends the "
+        + "first terms that fit in 128 characters as the request's prompt, a hint rather than a guaranteed "
+        + "correction. Run Locally uses the file the way the local engine does."
 }
