@@ -104,6 +104,7 @@ struct TranscriptionMethodPicker: View {
 struct CloudTranscriptionControls: View {
     @Bindable var settings: AppSettings
     var connectionTest: CloudConnectionTest
+    var modelList: CloudModelList
     /// e.g. "Run Locally uses WhisperKit · Large V3 Turbo".
     var localFallback: String
 
@@ -115,9 +116,7 @@ struct CloudTranscriptionControls: View {
         TextField("Base URL", text: $settings.cloudTranscriptionBaseURL, prompt: Text("https://api.openai.com/v1"))
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier(A11yID.cloudTranscriptionBaseURLField)
-        TextField("Model", text: $settings.cloudTranscriptionModel, prompt: Text("whisper-1"))
-            .textFieldStyle(.roundedBorder)
-            .accessibilityIdentifier(A11yID.cloudTranscriptionModelField)
+        CloudModelRow(settings: settings, modelList: modelList)
         SecureField("API key", text: $settings.cloudTranscriptionAPIKey)
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier(A11yID.cloudTranscriptionAPIKeyField)
