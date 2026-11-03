@@ -329,7 +329,9 @@ final class TranscriptionSettingsCloudTests: XCTestCase {
         let sessionConfig = URLSessionConfiguration.ephemeral
         sessionConfig.protocolClasses = [MockURLProtocol.self]
         let test = CloudConnectionTest(session: URLSession(configuration: sessionConfig))
-        let controls = CloudTranscriptionControls(settings: settings, connectionTest: test, localFallback: "")
+        let controls = CloudTranscriptionControls(
+            settings: settings, connectionTest: test, modelList: CloudModelList(), localFallback: "",
+        )
 
         try controls.inspect()
             .find(viewWithAccessibilityIdentifier: A11yID.cloudTranscriptionTestButton)
