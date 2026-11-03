@@ -381,10 +381,16 @@
                 let parakeetLanguage: String
                 let customVocabularyEnabled: Bool
                 let customVocabularyPath: String
+                /// Cloud transcription; the API key is never included.
+                let cloudTranscriptionEnabled: Bool
+                let cloudTranscriptionBaseURL: String
+                let cloudTranscriptionModel: String
 
                 static let empty = Self(
                     engine: "", whisperKitModel: "", whisperLanguage: "",
                     parakeetLanguage: "", customVocabularyEnabled: false, customVocabularyPath: "",
+                    cloudTranscriptionEnabled: false, cloudTranscriptionBaseURL: "",
+                    cloudTranscriptionModel: "",
                 )
             }
 

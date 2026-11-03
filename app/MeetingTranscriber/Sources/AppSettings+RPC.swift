@@ -62,6 +62,9 @@
                 parakeetLanguage: parakeetLanguage,
                 customVocabularyEnabled: customVocabularyEnabled,
                 customVocabularyPath: customVocabularyPath,
+                cloudTranscriptionEnabled: cloudTranscriptionEnabled,
+                cloudTranscriptionBaseURL: cloudTranscriptionBaseURL,
+                cloudTranscriptionModel: cloudTranscriptionModel,
             )
         }
 

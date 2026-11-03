@@ -203,6 +203,11 @@ final class AppSettings { // swiftlint:disable:this type_body_length
     /// Keychain account backing `notionAPIKey`, same injection reasoning as above.
     @ObservationIgnored private let notionAPIKeyAccount: String
 
+    /// Keychain account backing `cloudTranscriptionAPIKey`, same injection
+    /// reasoning as above. Its own account so the transcription provider never
+    /// shares a credential with the Meeting Notes provider.
+    @ObservationIgnored private let cloudTranscriptionAPIKeyAccount: String
+
     // MARK: - Apps to Watch
 
     var watchTeams: Bool {
@@ -363,6 +368,74 @@ final class AppSettings { // swiftlint:disable:this type_body_length
 
     var transcriptionEngine: TranscriptionEngineSetting {
         didSet { defaults.set(transcriptionEngine.rawValue, forKey: "transcriptionEngine") }
+    }
+
+    /// Send newly queued recordings to the cloud endpoint below instead of
+    /// `transcriptionEngine`, which stays selected for when this is off.
+    var cloudTranscriptionEnabled: Bool {
+        didSet { defaults.set(cloudTranscriptionEnabled, forKey: "cloudTranscriptionEnabled") }
+    }
+
+    /// The user confirmed once that meeting audio leaves the Mac; later
+    /// switches to cloud skip the confirmation.
+    var cloudTranscriptionConsented: Bool {
+        didSet { defaults.set(cloudTranscriptionConsented, forKey: "cloudTranscriptionConsented") }
+    }
+
+    /// OpenAI-compatible API base URL, e.g. `https://api.openai.com/v1`.
+    var cloudTranscriptionBaseURL: String {
+        didSet { defaults.set(cloudTranscriptionBaseURL, forKey: "cloudTranscriptionBaseURL") }
+    }
+
+    var cloudTranscriptionModel: String {
+        didSet { defaults.set(cloudTranscriptionModel, forKey: "cloudTranscriptionModel") }
+    }
+
+    /// Keychain-backed; empty deletes the item.
+    var cloudTranscriptionAPIKey: String {
+        get {
+            access(keyPath: \.cloudTranscriptionAPIKey)
+            return KeychainHelper.read(key: cloudTranscriptionAPIKeyAccount) ?? ""
+        }
+        set {
+            withMutation(keyPath: \.cloudTranscriptionAPIKey) {
+                if newValue.isEmpty {
+                    KeychainHelper.delete(key: cloudTranscriptionAPIKeyAccount)
+                } else {
+                    KeychainHelper.save(key: cloudTranscriptionAPIKeyAccount, value: newValue)
+                }
+            }
+        }
+    }
+
+    /// The target a recording queued now is captured with.
+    var transcriptionTarget: TranscriptionTarget {
+        cloudTranscriptionEnabled ? .cloud : .local
+    }
+
+    var cloudTranscriptionConfiguration: CloudTranscriptionConfiguration {
+        CloudTranscriptionConfiguration(
+            baseURL: cloudTranscriptionBaseURL,
+            model: cloudTranscriptionModel,
+            apiKey: cloudTranscriptionAPIKey,
+        )
+    }
+
+    /// Sends local jobs to `local` and cloud jobs to a `CloudTranscriptionEngine`
+    /// that reads the endpoint when it transcribes; only the cloud-or-local
+    /// choice is captured per job.
+    @MainActor
+    func transcriptionEngineResolver(
+        local: any TranscribingEngine,
+        session: URLSession = .shared,
+    ) -> TranscriptionEngineResolver {
+        let cloud = CloudTranscriptionEngine(configuration: { [self] in cloudTranscriptionConfiguration }, session: session)
+        return { target in
+            switch target {
+            case .local: local
+            case .cloud: cloud
+            }
+        }
     }
 
     /// The stock variant picked in Settings. Stays a stock variant while a custom
@@ -814,12 +887,14 @@ final class AppSettings { // swiftlint:disable:this type_body_length
         apiKeyAccount: String = "openAIAPIKey",
         claudeAPIKeyAccount: String = "claudeAPIKey",
         notionAPIKeyAccount: String = "notionAPIKey",
+        cloudTranscriptionAPIKeyAccount: String = "cloudTranscriptionAPIKey",
         defaultOutputDir: URL = AppPaths.downloadsProtocolsDir,
     ) {
         self.defaults = defaults
         self.apiKeyAccount = apiKeyAccount
         self.claudeAPIKeyAccount = claudeAPIKeyAccount
         self.notionAPIKeyAccount = notionAPIKeyAccount
+        self.cloudTranscriptionAPIKeyAccount = cloudTranscriptionAPIKeyAccount
         self.defaultOutputDir = defaultOutputDir
 
         watchTeams = defaults.bool(forKey: "watchTeams", default: true)
@@ -851,6 +926,10 @@ final class AppSettings { // swiftlint:disable:this type_body_length
 
         transcriptionEngine = (defaults.string(forKey: "transcriptionEngine")
             .flatMap(TranscriptionEngineSetting.init(rawValue:))) ?? .whisperKit
+        cloudTranscriptionEnabled = defaults.bool(forKey: "cloudTranscriptionEnabled", default: false)
+        cloudTranscriptionConsented = defaults.bool(forKey: "cloudTranscriptionConsented", default: false)
+        cloudTranscriptionBaseURL = defaults.string(forKey: "cloudTranscriptionBaseURL") ?? "https://api.openai.com/v1"
+        cloudTranscriptionModel = defaults.string(forKey: "cloudTranscriptionModel") ?? "whisper-1"
         whisperKitModel = defaults.object(forKey: "whisperKitModel") as? String
             ?? "openai_whisper-large-v3-v20240930_turbo"
         whisperKitCustomModelEnabled = defaults.bool(forKey: "whisperKitCustomModelEnabled", default: false)

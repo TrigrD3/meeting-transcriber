@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Foundation
 import Observation
 import os.log
@@ -298,6 +299,8 @@ final class PipelineController {
             // not from `effectiveOutputDir`, which `body` reads on every render.
             outputDir: queueEnvironment.resolveOutputDir(outputDirectory),
             logDir: queueEnvironment.logDir,
+            engineResolver: settings.transcriptionEngineResolver(local: engine),
+            transcriptionTargetProvider: { [settings] in settings.transcriptionTarget },
             stagingDir: queueEnvironment.stagingDir,
             diarizeEnabled: settings.diarize,
             echoDedupEnabled: settings.echoDedupEnabled,

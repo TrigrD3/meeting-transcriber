@@ -141,6 +141,10 @@ class PipelineQueue {
     /// Reads the current Settings only when a job is enqueued; the values are
     /// then copied onto the job and remain stable for its whole lifecycle.
     private let transcriptOutputOptionsProvider: () -> TranscriptOutputOptions
+
+    /// The target a newly admitted job is stamped with: the current
+    /// "Transcribe in the cloud" setting.
+    private let transcriptionTargetProvider: () -> TranscriptionTarget
     let speakerMatcherFactory: () -> SpeakerMatcher
     let vadConfig: VADConfig?
     /// nil disables JSONL logging. AppState injects a real instance for production;
@@ -390,6 +394,7 @@ class PipelineQueue {
         )
         fallbackTranscriptOutputOptions = outputOptions
         transcriptOutputOptionsProvider = { outputOptions }
+        transcriptionTargetProvider = { .local }
         self.speakerMatcherFactory = speakerMatcherFactory
         self.snapshotWriter = snapshotWriter
         self.vadConfig = nil
@@ -473,7 +478,8 @@ class PipelineQueue {
     /// Full init with all processing dependencies.
     ///
     /// `engineResolver` picks the engine for each job's target; nil sends every
-    /// target to `engine`.
+    /// target to `engine`. `transcriptionTargetProvider` is the target a newly
+    /// admitted job is stamped with.
     init(
         engine: any TranscribingEngine,
         diarizationFactory: @escaping () -> any DiarizationProvider,
@@ -482,6 +488,7 @@ class PipelineQueue {
         outputDir: URL,
         logDir: URL,
         engineResolver: TranscriptionEngineResolver? = nil,
+        transcriptionTargetProvider: @escaping () -> TranscriptionTarget = { .local },
         stagingDir: URL = AppPaths.recordingsDir,
         diarizeEnabled: Bool = false,
         echoDedupEnabled: Bool = true,
@@ -510,7 +517,7 @@ class PipelineQueue {
         eventLog = PipelineEventLog(logDir: self.logDir)
         self.engineResolver = engineResolver ?? { target in
             switch target {
-            case .local: engine
+            case .local, .cloud: engine
             }
         }
         self.diarizationFactory = diarizationFactory
@@ -541,6 +548,7 @@ class PipelineQueue {
         )
         fallbackTranscriptOutputOptions = outputOptions
         self.transcriptOutputOptionsProvider = transcriptOutputOptionsProvider ?? { outputOptions }
+        self.transcriptionTargetProvider = transcriptionTargetProvider
         self.speakerMatcherFactory = speakerMatcherFactory
         self.snapshotWriter = snapshotWriter
         self.vadConfig = vadConfig
@@ -624,7 +632,7 @@ class PipelineQueue {
     /// already recovered recording.
     func stampAdmissionSettings(on job: inout PipelineJob) {
         if job.transcriptionTarget == nil {
-            job.transcriptionTarget = .local
+            job.transcriptionTarget = transcriptionTargetProvider()
         }
         let outputOptions = transcriptOutputOptionsProvider()
         if job.includeFullTranscriptInProtocol == nil {
