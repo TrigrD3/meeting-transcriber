@@ -29,11 +29,38 @@ final class CloudTranscriptionConsent {
     }
 }
 
+/// Test Connection's state; a reference type for the same reason as
+/// `CloudTranscriptionConsent`.
+@MainActor
+@Observable
+final class CloudConnectionTest {
+    private(set) var isRunning = false
+    private(set) var result: CloudConnectionTestResult?
+    private let session: URLSession
+    /// The test in flight, kept so a view test can await it.
+    private(set) var task: Task<Void, Never>?
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    func run(_ config: CloudTranscriptionConfiguration) {
+        guard !isRunning else { return }
+        isRunning = true
+        result = nil
+        task = Task {
+            result = await CloudTranscriptionEngine.testConnection(config, session: session)
+            isRunning = false
+        }
+    }
+}
+
 /// "Transcribe in the cloud" and its endpoint fields, above the local engine
 /// picker, which stays selected for when cloud is off.
 struct CloudTranscriptionControls: View {
     @Bindable var settings: AppSettings
     @Bindable var consent: CloudTranscriptionConsent
+    var connectionTest: CloudConnectionTest
 
     var body: some View {
         Toggle("Transcribe in the cloud", isOn: Binding(
@@ -66,6 +93,32 @@ struct CloudTranscriptionControls: View {
             SecureField("API key", text: $settings.cloudTranscriptionAPIKey)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier(A11yID.cloudTranscriptionAPIKeyField)
+            connectionTestRow
+        }
+    }
+
+    private var connectionTestRow: some View {
+        HStack {
+            Button {
+                connectionTest.run(settings.cloudTranscriptionConfiguration)
+            } label: {
+                HStack(spacing: 4) {
+                    if connectionTest.isRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text("Test Connection")
+                }
+            }
+            .disabled(connectionTest.isRunning)
+            .accessibilityIdentifier(A11yID.cloudTranscriptionTestButton)
+
+            if let result = connectionTest.result {
+                Label(result.message, systemImage: result == .success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(result == .success ? .green : .red)
+                    .font(.caption)
+                    .accessibilityIdentifier(A11yID.cloudTranscriptionTestStatus)
+            }
         }
     }
 

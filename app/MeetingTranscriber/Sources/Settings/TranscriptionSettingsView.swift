@@ -19,6 +19,7 @@ struct TranscriptionSettingsView: View {
     /// Whether the cloud consent alert is up; created in `init` for the same
     /// reason as `customModelDrafts`.
     @State private var cloudConsent: CloudTranscriptionConsent
+    @State private var cloudConnectionTest: CloudConnectionTest
 
     /// WhisperKit models earlier builds left in `Documents`. Nil leaves the row
     /// out, so a view built without one (as most view tests do) is never bound
@@ -40,6 +41,7 @@ struct TranscriptionSettingsView: View {
         // a new object on every read and lose each edit.
         _customModelDrafts = State(initialValue: WhisperKitCustomModelDrafts())
         _cloudConsent = State(initialValue: CloudTranscriptionConsent())
+        _cloudConnectionTest = State(initialValue: CloudConnectionTest())
         _legacyModels = State(initialValue: legacyModels)
     }
 
@@ -104,7 +106,7 @@ struct TranscriptionSettingsView: View {
     /// after it moves.
     @ViewBuilder
     private var enginePicker: some View { // swiftlint:disable:this attributes
-        CloudTranscriptionControls(settings: settings, consent: cloudConsent)
+        CloudTranscriptionControls(settings: settings, consent: cloudConsent, connectionTest: cloudConnectionTest)
         Picker("Engine", selection: $settings.transcriptionEngine) {
             ForEach(TranscriptionEngineSetting.availableCases, id: \.self) { engine in
                 Text(engine.label).tag(engine)

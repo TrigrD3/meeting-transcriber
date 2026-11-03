@@ -138,4 +138,56 @@ final class TranscriptionSettingsCloudTests: XCTestCase {
         let stored = defaults.dictionaryRepresentation().values.compactMap { $0 as? String }
         XCTAssertFalse(stored.contains("sk-cloud"), "the key must never reach UserDefaults")
     }
+
+    // MARK: - Test Connection
+
+    func testTestConnectionButtonRunsTheTestAndShowsItsResult() async throws {
+        let settings = makeSettings()
+        settings.cloudTranscriptionEnabled = true
+        settings.cloudTranscriptionBaseURL = "https://cloud.test/v1"
+        MockURLProtocol.handler = { request in
+            // swiftlint:disable:next force_unwrapping
+            (HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        defer { MockURLProtocol.handler = nil }
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.protocolClasses = [MockURLProtocol.self]
+        let test = CloudConnectionTest(session: URLSession(configuration: sessionConfig))
+        let controls = CloudTranscriptionControls(settings: settings, consent: CloudTranscriptionConsent(), connectionTest: test)
+
+        try controls.inspect()
+            .find(viewWithAccessibilityIdentifier: A11yID.cloudTranscriptionTestButton)
+            .find(ViewType.Button.self)
+            .tap()
+        XCTAssertTrue(test.isRunning, "the button must start the test and show it running")
+        await test.task?.value
+
+        XCTAssertEqual(test.result, .authFailed(status: 401))
+        let status = try controls.inspect()
+            .find(viewWithAccessibilityIdentifier: A11yID.cloudTranscriptionTestStatus)
+            .find(ViewType.Text.self)
+            .string()
+        XCTAssertEqual(status, CloudConnectionTestResult.authFailed(status: 401).message)
+    }
+
+    // MARK: - Configuration
+
+    func testConfigurationCarriesTheEngineLanguageAndVocabularyTerms() throws {
+        let settings = makeSettings()
+        settings.transcriptionEngine = .whisperKit
+        settings.whisperLanguage = "id"
+        let vocabulary = FileManager.default.temporaryDirectory.appendingPathComponent("vocab_\(UUID().uuidString).txt")
+        try "Dexa\nProf Raymond\n".write(to: vocabulary, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: vocabulary) }
+        settings.setCustomVocabularyPath(vocabulary.path)
+
+        let config = settings.cloudTranscriptionConfiguration
+        XCTAssertEqual(config.language, "id")
+        XCTAssertEqual(config.vocabularyTerms, ["Dexa", "Prof Raymond"])
+
+        settings.whisperLanguage = ""
+        settings.clearCustomVocabularyFile()
+        XCTAssertNil(settings.cloudTranscriptionConfiguration.language)
+        XCTAssertEqual(settings.cloudTranscriptionConfiguration.vocabularyTerms, [])
+    }
 }
