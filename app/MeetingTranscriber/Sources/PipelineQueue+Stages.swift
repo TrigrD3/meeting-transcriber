@@ -226,7 +226,7 @@ extension PipelineQueue {
         // session.
         if await resumeProtocolOnly(job) { return true }
 
-        guard let engine, let outputDir else {
+        guard let engine = transcriptionEngine(for: job), let outputDir else {
             logger.warning("Processing dependencies not configured — skipping")
             return false
         }

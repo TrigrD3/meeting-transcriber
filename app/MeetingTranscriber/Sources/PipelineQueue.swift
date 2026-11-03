@@ -67,7 +67,16 @@ class PipelineQueue {
     var protocolResumeDispositions: [UUID: ProtocolResumeDisposition] = [:]
 
     // Dependencies for processing
-    let engine: (any TranscribingEngine)?
+    /// Picks each job's engine from its `transcriptionTarget`, so the target a
+    /// job was queued with decides how it is transcribed. Nil when the queue
+    /// has no engines wired (the skeleton init).
+    let engineResolver: TranscriptionEngineResolver?
+
+    /// The local engine; nil when no engines are wired.
+    var engine: (any TranscribingEngine)? {
+        engineResolver?(.local)
+    }
+
     let diarizationFactory: (() -> any DiarizationProvider)?
     /// Optional mode-overriding factory used by `lateDiarization` when the
     /// user picks a different mode in the re-run UI. `nil` = mode override
@@ -360,7 +369,7 @@ class PipelineQueue {
         self.logDir = logDir
         self.processedLedger = ProcessedRecordingsLedger(logDir: self.logDir)
         eventLog = PipelineEventLog(logDir: self.logDir)
-        self.engine = nil
+        engineResolver = nil
         self.diarizationFactory = nil
         self.diarizationFactoryWithMode = nil
         self.protocolGeneratorFactory = nil
@@ -462,6 +471,9 @@ class PipelineQueue {
     }
 
     /// Full init with all processing dependencies.
+    ///
+    /// `engineResolver` picks the engine for each job's target; nil sends every
+    /// target to `engine`.
     init(
         engine: any TranscribingEngine,
         diarizationFactory: @escaping () -> any DiarizationProvider,
@@ -469,6 +481,7 @@ class PipelineQueue {
         protocolGeneratorFactory: @escaping () -> (any ProtocolGenerating)?,
         outputDir: URL,
         logDir: URL,
+        engineResolver: TranscriptionEngineResolver? = nil,
         stagingDir: URL = AppPaths.recordingsDir,
         diarizeEnabled: Bool = false,
         echoDedupEnabled: Bool = true,
@@ -495,7 +508,11 @@ class PipelineQueue {
         self.logDir = logDir
         self.processedLedger = ProcessedRecordingsLedger(logDir: self.logDir)
         eventLog = PipelineEventLog(logDir: self.logDir)
-        self.engine = engine
+        self.engineResolver = engineResolver ?? { target in
+            switch target {
+            case .local: engine
+            }
+        }
         self.diarizationFactory = diarizationFactory
         self.diarizationFactoryWithMode = diarizationFactoryWithMode
         self.protocolGeneratorFactory = protocolGeneratorFactory
@@ -570,7 +587,7 @@ class PipelineQueue {
 
     func enqueue(_ inputJob: PipelineJob) {
         var job = inputJob
-        stampTranscriptOutputOptions(on: &job)
+        stampAdmissionSettings(on: &job)
         jobs.append(job)
         eventLog.append(jobID: job.id, event: "enqueued", from: nil, to: job.state)
         saveSnapshot()
@@ -595,10 +612,20 @@ class PipelineQueue {
         )
     }
 
+    /// The engine that transcribes this job, from the target it was queued
+    /// with. Nil when no engines are wired.
+    func transcriptionEngine(for job: PipelineJob) -> (any TranscribingEngine)? {
+        engineResolver?(job.transcriptionTarget ?? .local)
+    }
+
     /// Copy the current settings onto a newly admitted job. Recovery uses the
     /// same admission rule as regular enqueueing so a later settings change
-    /// cannot change output handling for an already recovered recording.
-    func stampTranscriptOutputOptions(on job: inout PipelineJob) {
+    /// cannot change output handling or the transcription target for an
+    /// already recovered recording.
+    func stampAdmissionSettings(on job: inout PipelineJob) {
+        if job.transcriptionTarget == nil {
+            job.transcriptionTarget = .local
+        }
         let outputOptions = transcriptOutputOptionsProvider()
         if job.includeFullTranscriptInProtocol == nil {
             job.includeFullTranscriptInProtocol = outputOptions.includeFullTranscriptInProtocol
@@ -1048,7 +1075,7 @@ class PipelineQueue {
         let event = StageTimingEvent(
             ts: Date(), jobID: jobID, stage: stage,
             wallClockSeconds: wallClock, audioSeconds: audioSeconds(),
-            engine: stage.isEngineScoped ? activeEngineTag : nil,
+            engine: stage.isEngineScoped ? engineTag(forJobID: jobID) : nil,
             diarizerMode: stage.isEngineScoped ? usedDiarizerMode(forJobID: jobID)?.rawValue : nil,
         )
         Task { [weak self] in
@@ -1057,10 +1084,12 @@ class PipelineQueue {
         }
     }
 
-    /// Concrete transcription-engine type name, the comparability tag stamped on
-    /// logged events; also used to resolve the active config for the menu.
-    private var activeEngineTag: String? {
-        engine.map { String(describing: type(of: $0)) }
+    /// Concrete type name of the engine a job transcribes with, the
+    /// comparability tag stamped on logged events; also used to resolve the
+    /// job's config for the menu.
+    private func engineTag(forJobID jobID: UUID) -> String? {
+        let engine = job(withID: jobID).flatMap(transcriptionEngine(for:)) ?? self.engine
+        return engine.map { String(describing: type(of: $0)) }
     }
 
     /// The historical average for the config a job is running at a given stage —
@@ -1069,7 +1098,7 @@ class PipelineQueue {
     /// config has logged data.
     func averageSeconds(forJobID jobID: UUID, stage: StageKind) -> Double? {
         let config = StageConfig(
-            stage: stage, engine: activeEngineTag,
+            stage: stage, engine: engineTag(forJobID: jobID),
             diarizerMode: usedDiarizerMode(forJobID: jobID)?.rawValue,
         )
         return stageAverageByConfig[config]

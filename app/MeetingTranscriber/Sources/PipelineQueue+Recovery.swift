@@ -589,7 +589,7 @@ extension PipelineQueue {
                 micPath: group.mic,
                 micDelay: 0,
             )
-            stampTranscriptOutputOptions(on: &job)
+            stampAdmissionSettings(on: &job)
             jobs.append(job)
             eventLog.append(jobID: job.id, event: "recovered", from: nil, to: .waiting)
         }
