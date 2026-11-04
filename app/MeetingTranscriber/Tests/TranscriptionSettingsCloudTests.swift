@@ -70,7 +70,7 @@ final class TranscriptionSettingsCloudTests: XCTestCase {
         let picker = try section.find(viewWithAccessibilityIdentifier: A11yID.transcriptionMethodPicker)
             .find(ViewType.Picker.self)
         XCTAssertEqual(try picker.labelView().text().string(), "Transcribe with")
-        XCTAssertNoThrow(try picker.find(text: "On this Mac"))
+        XCTAssertNoThrow(try picker.find(text: "Local"))
         XCTAssertNoThrow(try picker.find(text: "Cloud"))
         XCTAssertTrue(section.isDisabled())
     }
@@ -127,7 +127,7 @@ final class TranscriptionSettingsCloudTests: XCTestCase {
             .find(viewWithAccessibilityIdentifier: A11yID.transcriptionMethodPicker)
             .find(ViewType.Picker.self)
             .selectedValue(TranscriptionMethod.self)
-        XCTAssertEqual(selected, .onThisMac, "the dropdown must return to On this Mac")
+        XCTAssertEqual(selected, .onThisMac, "the dropdown must return to Local")
     }
 
     func testConfirmSwitchesToCloudAndIsRemembered() throws {

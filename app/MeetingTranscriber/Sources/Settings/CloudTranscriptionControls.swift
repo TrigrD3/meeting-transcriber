@@ -9,7 +9,7 @@ final class CloudTranscriptionConsent {
     var isAsking = false
 
     /// The "Transcribe with" write: picking Cloud asks first until the user has
-    /// confirmed once; On this Mac never asks.
+    /// confirmed once; Local never asks.
     func request(_ enabled: Bool, in settings: AppSettings) {
         if enabled, !settings.cloudTranscriptionConsented {
             isAsking = true
@@ -64,14 +64,14 @@ enum TranscriptionMethod: CaseIterable {
 
     var label: String {
         switch self {
-        case .onThisMac: "On this Mac"
+        case .onThisMac: "Local"
         case .cloud: "Cloud"
         }
     }
 }
 
 /// "Transcribe with": picking Cloud asks for consent first until the user has
-/// confirmed once; Cancel leaves it on On this Mac.
+/// confirmed once; Cancel leaves it on Local.
 struct TranscriptionMethodPicker: View {
     @Bindable var settings: AppSettings
     @Bindable var consent: CloudTranscriptionConsent
