@@ -57,7 +57,7 @@ final class TranscriptionSettingsCloudTests: XCTestCase {
     ]
 
     private static let localWhisperKitRows = [
-        A11yID.whisperKitModelPicker, A11yID.whisperKitVocabularyPromptToggle,
+        A11yID.whisperKitModelPicker,
     ]
 
     // MARK: - Dropdown and visible rows
@@ -204,6 +204,7 @@ final class TranscriptionSettingsCloudTests: XCTestCase {
             let settings = makeSettings()
             settings.transcriptionEngine = .parakeet
             settings.cloudTranscriptionEnabled = cloud
+            settings.customVocabularyEnabled = true
             let section = try makeView(settings).inspect()
                 .find(viewWithAccessibilityIdentifier: A11yID.vocabularySection)
             XCTAssertNoThrow(try section.find(viewWithAccessibilityIdentifier: A11yID.customVocabularyPathField))
@@ -385,6 +386,7 @@ final class TranscriptionSettingsCloudTests: XCTestCase {
         settings.transcriptionEngine = .whisperKit
         settings.whisperLanguage = "de"
         settings.cloudTranscriptionLanguage = "id"
+        settings.customVocabularyEnabled = true
         let vocabulary = FileManager.default.temporaryDirectory.appendingPathComponent("vocab_\(UUID().uuidString).txt")
         try "Dexa\nProf Raymond\n".write(to: vocabulary, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: vocabulary) }
