@@ -273,6 +273,11 @@ struct TranscriptionSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityIdentifier(A11yID.liveTranscriptionSection)
+        .task(id: settings.activeEngineLanguageOrNil) {
+            guard let language = settings.activeEngineLanguageOrNil,
+                  LiveCaptionsGate.needsDictationLookup(language) else { return }
+            await DictationCaptionSupport.shared.loadIfNeeded()
+        }
         .recordOnlyDisabled(settings.recordOnly)
     }
 
@@ -302,12 +307,21 @@ struct TranscriptionSettingsView: View {
     }
 
     /// The backend live captions would use if enabled, from the one routing rule.
-    static func captionStrategy(for settings: AppSettings) -> LiveCaptionsGate.Strategy {
+    static func captionStrategy(
+        for settings: AppSettings,
+        dictationSupportsLanguage: (String) -> Bool = { _ in false },
+    ) -> LiveCaptionsGate.Strategy {
         LiveCaptionsGate.strategy(
             liveEnabled: true,
             engineLanguage: settings.activeEngineLanguageOrNil,
             engineSupportsLive: settings.transcriptionEngine.supportsLiveTranscription,
+            dictationSupportsLanguage: dictationSupportsLanguage,
         )
+    }
+
+    /// Reads the observed Dictation locale list, so the footnote updates once discovery ends.
+    private var captionStrategy: LiveCaptionsGate.Strategy {
+        Self.captionStrategy(for: settings) { DictationCaptionSupport.shared.supports($0) }
     }
 
     /// True when enabling captions would trigger the first-use Nemotron download:
@@ -318,7 +332,7 @@ struct TranscriptionSettingsView: View {
 
     private var needsCaptionModelConsent: Bool {
         Self.needsCaptionModelConsent(
-            strategy: Self.captionStrategy(for: settings), modelDownloaded: nemotronModelDownloaded,
+            strategy: captionStrategy, modelDownloaded: nemotronModelDownloaded,
         )
     }
 
@@ -351,42 +365,10 @@ struct TranscriptionSettingsView: View {
 
     private var captionBackendFootnote: String {
         Self.captionBackendFootnote(
-            strategy: Self.captionStrategy(for: settings),
+            strategy: captionStrategy,
             languageIsSet: settings.activeEngineLanguageOrNil != nil,
             detectsLanguage: activeEngine.supportsCaptionLanguageDetection,
         )
-    }
-
-    /// Describes the backend `LiveCaptionsGate` selects for the current transcription
-    /// language: English → Parakeet EOU, a language Nemotron was trained on → Nemotron
-    /// streaming, any other language → the standard re-transcribe engine; auto-detect too, unless the engine detects English first.
-    static func captionBackendFootnote(
-        strategy: LiveCaptionsGate.Strategy,
-        languageIsSet: Bool,
-        detectsLanguage: Bool,
-    ) -> String {
-        switch strategy {
-        case .englishStreaming:
-            "Caption backend follows your transcription language. English uses the "
-                + "low-latency Parakeet streaming model."
-
-        case .nemotronStreaming:
-            "Caption backend follows your transcription language. It uses the low-latency "
-                + "Nemotron multilingual streaming model (~0.6-0.7 GB, downloads on first use)."
-
-        // `.none` cannot be reached with a language set: both engines support re-transcribe.
-        case .reTranscribe, .none:
-            if languageIsSet {
-                "Caption backend follows your transcription language. This language has no "
-                    + "low-latency streaming model, so captions use the standard re-transcribe engine."
-            } else if detectsLanguage {
-                "Caption backend follows your transcription language. Auto-detect listens to the first few seconds of speech: "
-                    + "English then streams through the low-latency Parakeet model; other languages use the standard re-transcribe engine."
-            } else {
-                "Caption backend follows your transcription language. Auto-detect uses the "
-                    + "standard re-transcribe engine; set a specific language for low-latency streaming captions."
-            }
-        }
     }
 
     private var liveTranscriptionFootnote: String {

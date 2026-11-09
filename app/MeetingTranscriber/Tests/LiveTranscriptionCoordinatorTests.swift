@@ -321,6 +321,32 @@ final class LiveTranscriptionCoordinatorTests: XCTestCase {
         _ = coordinator // retain through the observer fire above
     }
 
+    /// An untrained language warms the re-transcribe fallback at once; when the
+    /// prewarm's Dictation locale discovery lands, the idle controller is rebuilt
+    /// so it can route to Dictation.
+    func testDictationLocaleDiscoveryRebuildsTheIdleController() async throws {
+        guard LiveCaptionsGate.systemSupportsDictation else { throw XCTSkip("DictationTranscriber needs macOS 26") }
+        let support = DictationCaptionSupport { [Locale(identifier: "id_ID")] }
+        let (factory, buildCount) = countingControllerFactory()
+        let coordinator = LiveTranscriptionCoordinator(
+            captions: LiveCaptionsState(),
+            liveEnabled: { true },
+            engineSupportsLive: { true },
+            engineLanguage: { "id" },
+            verboseDiagnostics: { false },
+            makeController: factory,
+            dictationSupport: support,
+        )
+        coordinator.beginPrewarm { MockStreamingEngine() }
+        XCTAssertEqual(buildCount(), 1, "the fallback warms before discovery ends")
+
+        for _ in 0 ..< 200 where buildCount() < 2 {
+            await Task.yield()
+        }
+        XCTAssertTrue(support.supports("id"))
+        XCTAssertEqual(buildCount(), 2, "discovery rebuilds the idle controller")
+    }
+
     // MARK: - Whether captions use the engine
 
     func testReTranscribeCaptionsUseTheEngineBeforePrepareRuns() {
@@ -353,6 +379,44 @@ final class LiveTranscriptionCoordinatorTests: XCTestCase {
         await queue.run {} // after prepare() and its flag update
 
         XCTAssertEqual(captions.activeBackend, "Parakeet EOU · EN", "test premise: the EOU session was built")
+        XCTAssertFalse(coordinator.captionsUseEngine)
+    }
+
+    /// Dictation sessions run without the engine, so they must not hold it resident.
+    func testDictationCaptionsDoNotUseTheEngine() async throws {
+        guard LiveCaptionsGate.systemSupportsDictation else { throw XCTSkip("DictationTranscriber needs macOS 26") }
+        let captions = LiveCaptionsState()
+        let queue = ModelWarmupQueue()
+        let support = DictationCaptionSupport { [Locale(identifier: "id_ID")] }
+        await support.loadIfNeeded()
+        let factory: LiveTranscriptionCoordinator.ControllerFactory = { engine, captions, language, _ in
+            LiveTranscriptionController(
+                engine: engine,
+                vad: FluidVAD(threshold: 0.5),
+                captions: captions,
+                speakerMatcher: FakeLiveSpeakerMatcher(),
+                engineLanguage: language,
+                dictationAvailable: true,
+                dictationSupportsLanguage: { support.supports($0) },
+                dictationPipelineFactory: { _, _ in (RecordingCaptionPipeline(blockFirst: false), RecordingCaptionPipeline(blockFirst: false)) },
+            )
+        }
+        let coordinator = LiveTranscriptionCoordinator(
+            captions: captions,
+            liveEnabled: { true },
+            engineSupportsLive: { true },
+            engineLanguage: { "id" },
+            verboseDiagnostics: { false },
+            makeController: factory,
+            warmupQueue: queue,
+            dictationSupport: support,
+        )
+        coordinator.beginPrewarm { MockStreamingEngine() }
+        XCTAssertFalse(coordinator.captionsUseEngine, "the warm-up must not hold the engine either")
+        await waitFor(captions.activeBackend != nil, timeout: .seconds(2))
+        await queue.run {}
+
+        XCTAssertEqual(captions.activeBackend, "Dictation · ID", "test premise: the Dictation sessions were built")
         XCTAssertFalse(coordinator.captionsUseEngine)
     }
 

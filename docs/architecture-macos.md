@@ -103,6 +103,7 @@ State writes to `AppPaths.dataDir`; IPC + queue snapshots to `ipcDir`.
 | `Settings/GeneralSettingsView.swift` | Startup (Launch at login, Start watching when the app opens = `AppSettings.autoWatch`) · Mode (Record-only) · Apps to Watch (Teams/Zoom/Webex/Browser/WeChat/Tencent Meeting/FaceTime/WhatsApp/Slack) · Detection (Poll Interval, Grace Period) |
 | `Settings/AudioSettingsView.swift` | Microphone device · VAD (enabled + threshold) · Per-Channel Indicator |
 | `Settings/TranscriptionSettingsView.swift` | ASR engine picker · engine-specific options · model status · Vocabulary section · Live transcription (PoC) toggle |
+| `Settings/TranscriptionSettingsView+CaptionFootnote.swift` | The footnote naming the live-caption backend the transcription language selects, split out for size |
 | `Settings/SpeakersSettingsView.swift` | Diarization · Speaker Naming (open the naming window automatically, how long unnamed meetings wait) · Mic Speaker Name · Known Voices · Recognition Stats · Experimental: Diarization Tuning |
 | `Settings/OutputSettingsView.swift` | Output tab: output folder · recording retention · Meeting Notes (notes language, prompt, output toggles) · AI Provider (provider, Claude CLI binary and key, connection picker, model) |
 | `Settings/OpenAIConnectionSection.swift` | Connection Settings section: selected connection's endpoint and API key, collapsed Advanced group (key placement, sampling overrides) and its `OpenAIAdvancedDisclosure` state |
@@ -218,13 +219,16 @@ State writes to `AppPaths.dataDir`; IPC + queue snapshots to `ipcDir`.
 | `NamingWindowPolicy.swift` | Pins the "Name Speakers" window so it stays available while the user works in other apps (issue #504) |
 | `LiveTranscriptionController.swift` | Wires the per-channel live-caption pipeline (streaming or re-transcribe) to both `DualSourceRecorder` sinks (mic + app), feeds `LiveCaptionsState` |
 | `LiveTranscriptionController+Nemotron.swift` | Nemotron streaming-pipeline construction, split out for size; injectable factory for testing the build + model-load-failure fallback |
+| `LiveTranscriptionController+Dictation.swift` | Dictation streaming-pipeline construction behind an injectable factory; returns nil while the locale's speech assets are missing, so the controller falls back |
 | `LiveTranscriptionController+LanguageProbe.swift` | Auto-detect captions with WhisperKit: holds caption audio, detects the recording's language, then installs Parakeet EOU (English) or re-transcribe; also the stop-time `flush()` |
 | `CaptionLanguageProbe.swift` | Per-channel VAD probe that collects 4 s of speech for language detection, and the pure decision rule (probability ≥ 0.8, two English windows for EOU, up to 4 attempts) |
 | `LiveTranscriptionCoordinator.swift` | `@Observable` coordinator: builds + arms `LiveTranscriptionController`, feeds `LiveCaptionsState` |
-| `LiveCaptionPipeline.swift` | Per-channel live captioning strategy protocol (English EOU streaming \| Nemotron streaming \| WhisperKit/Parakeet re-transcribe) |
-| `LiveCaptionsGate.swift` | Pure decision logic for live captions routing: master toggle + explicit engine language (`en` → English EOU streaming, a language in `LiveCaptionLanguages` → Nemotron streaming, auto-detect or any other language → re-transcribe or none) — shared by `AppState`, coordinator, and controller. Overlay visibility is a separate UI AND (`overlayVisible`); it is not a strategy input |
+| `LiveCaptionPipeline.swift` | Per-channel live captioning strategy protocol (English EOU streaming \| Nemotron streaming \| Dictation streaming \| WhisperKit/Parakeet re-transcribe) |
+| `LiveCaptionsGate.swift` | Pure decision logic for live captions routing: master toggle + explicit engine language (`en` → English EOU streaming, a language in `LiveCaptionLanguages` → Nemotron streaming, another language on-device Dictation supports (macOS 26+) → Dictation streaming, auto-detect or any other language → re-transcribe or none) — shared by `AppState`, coordinator, and controller. Overlay visibility is a separate UI AND (`overlayVisible`); it is not a strategy input |
 | `EouStreamingCaptionSession.swift` | English low-latency streaming caption session via FluidAudio Parakeet EOU, backed by `UtteranceRingBuffer` |
 | `NemotronStreamingCaptionSession.swift` | Multilingual (non-English) low-latency streaming caption session via FluidAudio Nemotron |
+| `DictationStreamingCaptionSession.swift` | On-device Apple Dictation (`SpeechAnalyzer` + `DictationTranscriber`, macOS 26+) caption session for languages Nemotron was not trained on, backed by `UtteranceRingBuffer` |
+| `DictationCaptionSupport.swift` | Runtime discovery of Dictation's on-device locales and background installation of their speech assets; observed by the coordinator, which rebuilds the idle controller when either changes |
 | `NemotronAsrManager.swift` | Production seam wrapping FluidAudio's Nemotron model + Silero VAD for `NemotronStreamingCaptionSession` |
 | `UtteranceRingBuffer.swift` | Rolling 16 kHz sample buffer addressable by absolute ms timestamp (feeds streaming caption sessions) |
 | `AsyncSerialGate.swift` | First-come-first-served async mutual exclusion that suspends waiters instead of blocking a thread; serialises Nemotron 3 runs and model loads |
@@ -549,7 +553,7 @@ model on first use behind a consent alert). Nested "Show caption overlay"
 (`AppSettings.liveCaptionsOverlayEnabled`, default on) hides `LiveCaptionsOverlay` without
 stopping the pipeline; `LiveCaptionsState` and `/state.liveCaptions` keep updating.
 
-`LiveCaptionsGate.strategy(liveEnabled:engineLanguage:engineSupportsLive:)` is the pure decision
+`LiveCaptionsGate.strategy` is the pure decision
 function — shared by `AppState`, `LiveTranscriptionCoordinator`, and `LiveTranscriptionController`
 — that picks the per-channel backend from the active engine's **explicitly configured** language
 (not auto-detect):
@@ -558,6 +562,7 @@ function — shared by `AppState`, `LiveTranscriptionCoordinator`, and `LiveTran
 |---|---|---|
 | `en` | English streaming | `EouStreamingCaptionSession` (FluidAudio Parakeet EOU) |
 | a language Nemotron was trained on (`LiveCaptionLanguages`) | Nemotron streaming | `NemotronStreamingCaptionSession` / `NemotronAsrManager` (FluidAudio Nemotron multilingual) |
+| on macOS 26+, another language whose locale `DictationTranscriber.supportedLocales` reports | Dictation streaming | `DictationStreamingCaptionSession` (Apple Dictation, on-device); re-transcribe until its speech assets are installed |
 | auto-detect (`nil`) or any other language | re-transcribe | `StreamingTranscriber` via the active engine's `transcribeSamples`, if supported |
 | auto-detect or any other language + engine doesn't support live re-transcribe | none | captions off |
 
@@ -565,7 +570,7 @@ The gate's re-transcribe for auto-detect is where a recording starts. With Whisp
 `LiveTranscriptionController` first detects each recording's language and streams English through
 Parakeet EOU instead (see `docs/architecture/transcription.md`).
 
-Both streaming sessions are engine-independent (they drive their own FluidAudio models directly),
+The streaming sessions are engine-independent (EOU and Nemotron drive their own FluidAudio models, Dictation the system's Speech models),
 so they're available even when the active `TranscribingEngine` has no live re-transcribe hook.
 `LiveTranscriptionController` wires the resolved per-channel pipeline to both `DualSourceRecorder`
 sinks (mic + app) and feeds `LiveCaptionsState`, which backs the `LiveCaptionsOverlay` window.

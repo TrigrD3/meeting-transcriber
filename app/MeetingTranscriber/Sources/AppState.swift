@@ -474,7 +474,7 @@ final class AppState {
             engineSupportsLive: settings.transcriptionEngine.supportsLiveTranscription,
             isRecording: watching.isRecording,
             overlayEnabled: settings.liveCaptionsOverlayEnabled,
-        )
+        ) { DictationCaptionSupport.shared.supports($0) }
     }
 
     var currentBadge: BadgeKind {

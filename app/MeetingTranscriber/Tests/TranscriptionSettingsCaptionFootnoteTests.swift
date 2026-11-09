@@ -64,6 +64,22 @@ final class TranscriptionSettingsCaptionFootnoteTests: XCTestCase {
         XCTAssertNoThrow(try view.inspect().find(text: footnote))
     }
 
+    /// An untrained language the system Dictation supports routes there, without the Nemotron consent.
+    func testDictationLanguageFootnoteNamesDictationAndNeedsNoConsent() {
+        let settings = makeSettings()
+        settings.transcriptionEngine = .whisperKit
+        settings.whisperLanguage = "id"
+        let strategy = TranscriptionSettingsView.captionStrategy(for: settings) { $0 == "id" }
+        let expected: LiveCaptionsGate.Strategy = LiveCaptionsGate.systemSupportsDictation ? .dictationStreaming : .reTranscribe
+        XCTAssertEqual(strategy, expected)
+        XCTAssertFalse(TranscriptionSettingsView.needsCaptionModelConsent(strategy: strategy, modelDownloaded: false))
+        let footnote = TranscriptionSettingsView.captionBackendFootnote(
+            strategy: .dictationStreaming, languageIsSet: true, detectsLanguage: true,
+        )
+        XCTAssertTrue(footnote.contains("Apple Dictation"))
+        XCTAssertFalse(footnote.contains("Nemotron"))
+    }
+
     /// The footnote is a plain String, so Markdown emphasis would show its asterisks.
     func testLiveTranscriptionFootnoteUsesPlainLoggingText() throws {
         let view = TranscriptionSettingsView(

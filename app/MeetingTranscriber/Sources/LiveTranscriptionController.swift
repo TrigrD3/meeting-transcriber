@@ -45,7 +45,7 @@ final class LiveTranscriptionController {
     typealias EouSessionFactory = @MainActor () -> any EouStreamingAsrManaging
 
     /// Active engine for the VAD + re-transcribe path. Optional because the
-    /// language-driven streaming backends (Nemotron/EOU) are engine-independent:
+    /// language-driven streaming backends (Nemotron/EOU/Dictation) are engine-independent:
     /// with a non-streaming active engine there is no streaming engine to hold,
     /// and captions still run via those sessions.
     let engine: (any StreamingTranscribingEngine)?
@@ -54,24 +54,19 @@ final class LiveTranscriptionController {
     private let speakerMatcher: any LiveSpeakerMatching
     /// The active engine's EXPLICITLY-configured language (`de`/`en`/nil), which
     /// picks the streaming backend via `LiveCaptionsGate` (`en` → EOU, a Nemotron-trained
-    /// language such as `de` → Nemotron, else → re-transcribe). On a streaming-model load failure
+    /// language such as `de` → Nemotron, a runtime-supported Dictation locale →
+    /// Dictation, else → re-transcribe). On a streaming-model load failure
     /// `prepare()` degrades to re-transcribe (if supported) or to no captions.
     private let engineLanguage: String?
 
     /// Resolved per-channel strategy (`liveEnabled` is implicit — the controller
     /// only exists when captions are eligible).
-    private var captionStrategy: LiveCaptionsGate.Strategy {
-        LiveCaptionsGate.strategy(
-            liveEnabled: true,
-            engineLanguage: engineLanguage,
-            engineSupportsLive: engine != nil,
-        )
-    }
+    private let captionStrategy: LiveCaptionsGate.Strategy
 
-    /// True for the engine-independent streaming sessions (German/English), kept
+    /// True for the engine-independent streaming sessions (Nemotron/EOU/Dictation), kept
     /// across recordings vs. the rebuilt re-transcribe actors.
     private var isStreamingStrategy: Bool {
-        captionStrategy == .nemotronStreaming || captionStrategy == .englishStreaming
+        captionStrategy == .nemotronStreaming || captionStrategy == .englishStreaming || captionStrategy == .dictationStreaming
     }
 
     typealias ReTranscribePipelineFactory = @MainActor (
@@ -103,6 +98,7 @@ final class LiveTranscriptionController {
     private let reTranscribePipelineFactory: ReTranscribePipelineFactory?
     let eouSessionFactory: EouSessionFactory
     private let nemotronPipelineFactory: NemotronPipelineFactory
+    private let dictationPipelineFactory: DictationPipelineFactory
     /// Gate for caption-text logging. Caption strings are spoken user content
     /// — privacy-sensitive — so even with `privacy: .private` on the log
     /// arguments we don't emit by default. Same `() -> Bool` closure pattern
@@ -123,7 +119,7 @@ final class LiveTranscriptionController {
     /// `flush()`/`retireFeeds()`.
     let micFeed: CaptionChannelFeed
     let appFeed: CaptionChannelFeed
-    /// True once `prepare()` resolved to a kept streaming session (German/English),
+    /// True once `prepare()` resolved to a kept streaming session (Nemotron/EOU/Dictation),
     /// which `prepareForNextRecording()` keeps instead of rebuilding.
     var usingStreamingSession = false
     /// True once `prepare()` built the pipelines — distinguishes "not yet resolved"
@@ -183,6 +179,9 @@ final class LiveTranscriptionController {
         reTranscribePipelineFactory: ReTranscribePipelineFactory? = nil,
         maxQueuedSeconds: TimeInterval = 10,
         speechDetector: CaptionLanguageProbe.SpeechDetector? = nil,
+        dictationAvailable: Bool = LiveCaptionsGate.systemSupportsDictation,
+        dictationSupportsLanguage: @MainActor (String) -> Bool = { DictationCaptionSupport.shared.supports($0) },
+        dictationPipelineFactory: @escaping DictationPipelineFactory = LiveTranscriptionController.makeDefaultDictationPipelines,
         verboseDiagnostics: @escaping () -> Bool = { false },
     ) {
         micFeed = CaptionChannelFeed(maxQueuedSeconds: maxQueuedSeconds)
@@ -198,6 +197,11 @@ final class LiveTranscriptionController {
         self.engineLanguage = engineLanguage
         self.eouSessionFactory = eouSessionFactory
         self.nemotronPipelineFactory = nemotronPipelineFactory
+        self.captionStrategy = LiveCaptionsGate.strategy(
+            liveEnabled: true, engineLanguage: engineLanguage, engineSupportsLive: engine != nil,
+            dictationAvailable: dictationAvailable,
+        ) { dictationSupportsLanguage($0) }
+        self.dictationPipelineFactory = dictationPipelineFactory
         self.verboseDiagnostics = verboseDiagnostics
     }
 
@@ -217,7 +221,7 @@ final class LiveTranscriptionController {
     /// are not defended against and must not be introduced.
     ///
     /// When a streaming language is configured, builds the low-latency streaming
-    /// sessions (Nemotron or EOU); if their model load throws (e.g. first-use
+    /// sessions (Nemotron, EOU or Dictation); if their model load throws (e.g. first-use
     /// download offline) it logs and degrades to the re-transcribe path when the
     /// active engine supports it, or to no captions when it doesn't. A failed
     /// streaming load is **not** retried until the controller is rebuilt (a
@@ -262,7 +266,7 @@ final class LiveTranscriptionController {
         // re-transcribe fallback, not the selected streaming engine) and publish
         // it for the overlay indicator + the diagnostic log.
         let engine: String? = usingStreamingSession
-            ? (captionStrategy == .nemotronStreaming ? "Nemotron" : "Parakeet EOU")
+            ? captionStrategy.streamingBackendName
             : (micPipeline != nil ? "Re-transcribe" : nil)
         let backend = engine.map { name in
             engineLanguage.map { "\(name) · \($0.uppercased())" } ?? name
@@ -293,6 +297,9 @@ final class LiveTranscriptionController {
         case .englishStreaming:
             if await buildEnglishStreamingPipelines() { return }
 
+        case .dictationStreaming:
+            if await buildDictationStreamingPipelines() { return }
+
         case .reTranscribe, .none:
             break
         }
@@ -303,6 +310,25 @@ final class LiveTranscriptionController {
         await engine.loadModel()
         micPipeline = makeReTranscribePipeline(channel: .mic, engine: engine)
         appPipeline = makeReTranscribePipeline(channel: .app, engine: engine)
+    }
+
+    /// Missing assets start a background installation and return nil from the
+    /// factory, allowing the engine fallback to run without waiting for downloads.
+    private func buildDictationStreamingPipelines() async -> Bool {
+        guard let engineLanguage else { return false }
+        do {
+            guard let (mic, app) = try await dictationPipelineFactory(engineLanguage, { channel in
+                self.makeEventSink(channel: channel, logChannel: channel.rawValue)
+            }) else { return false }
+            micPipeline = mic
+            appPipeline = app
+            usingStreamingSession = true
+            return true
+        } catch {
+            logger.warning("Dictation session preparation failed, falling back: \(error.localizedDescription, privacy: .public)")
+            streamingLoadFailure = error.localizedDescription
+            return false
+        }
     }
 
     /// Build Nemotron sessions for both channels off one preloaded model set, in

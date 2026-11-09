@@ -69,6 +69,9 @@ final class LiveTranscriptionCoordinator {
     /// isolated queue.
     private let warmupQueue: ModelWarmupQueue
 
+    /// Dictation locale discovery and asset state; injectable so tests never reach Speech.
+    private let dictationSupport: DictationCaptionSupport
+
     /// Builds the streaming controller for the (optional) active engine. The
     /// engine is nil when a language-driven streaming backend (German/English)
     /// applies with a non-streaming active engine — those sessions don't need it.
@@ -89,6 +92,7 @@ final class LiveTranscriptionCoordinator {
         verboseDiagnostics: @escaping () -> Bool,
         makeController: @escaping ControllerFactory = LiveTranscriptionCoordinator.makeDefaultController,
         warmupQueue: ModelWarmupQueue = ModelWarmupQueue(),
+        dictationSupport: DictationCaptionSupport = .shared,
     ) {
         self.captions = captions
         self.liveEnabled = liveEnabled
@@ -97,6 +101,7 @@ final class LiveTranscriptionCoordinator {
         self.verboseDiagnostics = verboseDiagnostics
         self.makeController = makeController
         self.warmupQueue = warmupQueue
+        self.dictationSupport = dictationSupport
     }
 
     /// The real controller, whose `prepare()` loads the speaker-matcher, VAD and
@@ -129,7 +134,7 @@ final class LiveTranscriptionCoordinator {
             liveEnabled: liveEnabled(),
             engineLanguage: engineLanguage(),
             engineSupportsLive: engineSupportsLive(),
-        )
+        ) { dictationSupport.supports($0) }
     }
 
     /// Wire the active-engine source, then do the initial pre-warm + arm the
@@ -213,6 +218,8 @@ final class LiveTranscriptionCoordinator {
             _ = liveEnabled()
             _ = engineSupportsLive()
             _ = engineLanguage()
+            _ = dictationSupport.assetRevision
+            _ = dictationSupport.locales
         } onChange: { [weak self] in
             Task { @MainActor in self?.handleSettingsChange() }
         }
@@ -247,8 +254,14 @@ final class LiveTranscriptionCoordinator {
     }
 
     private func prewarmIfEligible() {
-        guard captionsEligible else { return }
-        _ = ensureController()
+        guard liveEnabled() else { return }
+        if let language = engineLanguage(), LiveCaptionsGate.needsDictationLookup(language),
+           !dictationSupport.isLoaded {
+            Task { await dictationSupport.loadIfNeeded() }
+        }
+        // Warm fallback immediately while locale discovery is pending. The
+        // observer rewarms on discovery/installation, deferring during recording.
+        if captionsEligible { _ = ensureController() }
     }
 
     /// Lazily create + warm the controller against the active engine. Idempotent
@@ -270,7 +283,7 @@ final class LiveTranscriptionCoordinator {
             liveEnabled: liveEnabled(),
             engineLanguage: language,
             engineSupportsLive: engineSupportsLive(),
-        )
+        ) { dictationSupport.supports($0) }
         guard strategy != .none else { return nil }
         // Re-transcribe needs a streaming engine; the streaming backends don't.
         guard strategy != .reTranscribe || streamingEngine != nil else { return nil }

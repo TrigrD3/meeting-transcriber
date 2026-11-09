@@ -11,10 +11,11 @@ import XCTest
 ///   * `en` → `.englishStreaming` (Parakeet EOU streaming, English-optimized)
 ///   * any other trained explicit language → `.nemotronStreaming` (Nemotron multilingual;
 ///     FluidAudio auto-selects the Latin or full multilingual model variant)
-///   * auto-detect (nil) or an untrained language → `.reTranscribe` if the engine supports the in-memory
+///   * an untrained language Apple Dictation supports on macOS 26+ → `.dictationStreaming`
+///   * auto-detect (nil) or any other language → `.reTranscribe` if the engine supports the in-memory
 ///     path, else `.none`.
 ///
-/// The two streaming backends bypass the active engine entirely, so they are
+/// The streaming backends bypass the active engine entirely, so they are
 /// available even when `engineSupportsLive` is false. Auto-detect deliberately
 /// does NOT route to a streaming model (the spoken language isn't statically
 /// known) — it falls back to the engine-driven re-transcribe path.
@@ -28,7 +29,7 @@ final class LiveCaptionsGateTests: XCTestCase {
         }
     }
 
-    func testExplicitNonEnglishLanguagesYieldNemotronStreaming() {
+    func testNemotronTrainedLanguagesYieldNemotronStreaming() {
         // Latin-script (latin model) and non-Latin (multilingual model) both
         // route to Nemotron; FluidAudio picks the variant from the language code.
         for lang in ["de", "es", "fr", "it", "pt", "pt-PT", "nl", "ru", "zh", "ja", "no", "PT_br"] {
@@ -73,6 +74,36 @@ final class LiveCaptionsGateTests: XCTestCase {
             LiveCaptionsGate.strategy(liveEnabled: true, engineLanguage: nil, engineSupportsLive: false),
             .none,
         )
+    }
+
+    func testIndonesianUsesRuntimeDictationSupport() {
+        for language in ["id", "id_ID", "id-ID"] {
+            XCTAssertEqual(LiveCaptionsGate.strategy(
+                liveEnabled: true, engineLanguage: language, engineSupportsLive: true,
+                dictationAvailable: true,
+            ) { _ in true }, .dictationStreaming)
+        }
+    }
+
+    func testUnsupportedLanguageKeepsEngineFallback() {
+        XCTAssertEqual(LiveCaptionsGate.strategy(
+            liveEnabled: true, engineLanguage: "id", engineSupportsLive: true,
+            dictationAvailable: true,
+        ) { _ in false }, .reTranscribe)
+    }
+
+    func testOlderMacOSKeepsFallbackEvenWithDictationLocale() {
+        XCTAssertEqual(LiveCaptionsGate.strategy(
+            liveEnabled: true, engineLanguage: "id", engineSupportsLive: true,
+            dictationAvailable: false,
+        ) { _ in true }, .reTranscribe)
+    }
+
+    func testNemotronTakesPriorityOverDictation() {
+        XCTAssertEqual(LiveCaptionsGate.strategy(
+            liveEnabled: true, engineLanguage: "de", engineSupportsLive: false,
+            dictationAvailable: true,
+        ) { _ in true }, .nemotronStreaming)
     }
 
     // MARK: - captionsAvailable
