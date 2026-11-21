@@ -25,8 +25,9 @@ extension AppSettings {
     /// The active transcription engine's EXPLICITLY configured language
     /// (ISO 639-1), or nil for auto-detect. Drives the live-caption streaming
     /// backend (`LiveCaptionsGate`): `en` → Parakeet EOU streaming, a language
-    /// Nemotron was trained on → Nemotron multilingual streaming, nil (auto-detect)
-    /// or any other language → engine-driven re-transcribe.
+    /// Nemotron was trained on → Nemotron multilingual streaming, an on-device
+    /// Dictation locale (macOS 26+) → Dictation, nil (auto-detect) or any other
+    /// language → engine-driven re-transcribe.
     var activeEngineLanguageOrNil: String? {
         switch transcriptionEngine {
         case .whisperKit: whisperLanguageOrNil
